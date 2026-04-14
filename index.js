@@ -112,6 +112,70 @@ functions.http('fetchRppReport', async (req, res) => {
     console.log('Step 6: RPPレポート条件設定...');
     await setCheckboxes(page);
 
+    // 日付入力フィールドの調査 & 全期間設定
+    console.log('Step 6: 日付フィールド調査...');
+    const dateFields = await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input'));
+      return inputs.filter(i => {
+        const t = i.type?.toLowerCase();
+        const id = (i.id || '').toLowerCase();
+        const name = (i.name || '').toLowerCase();
+        const ph = (i.placeholder || '').toLowerCase();
+        return t === 'date' || t === 'text' && (id.includes('date') || name.includes('date') || ph.includes('年') || ph.includes('/') || /^\d{4}/.test(i.value));
+      }).map(i => ({ id: i.id, name: i.name, type: i.type, value: i.value, placeholder: i.placeholder, className: i.className?.substring(0, 60) }));
+    });
+    console.log('日付フィールド:', JSON.stringify(dateFields));
+
+    // 期間をできるだけ広く設定（開始日を2年前に）
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const startStr = twoYearsAgo.toISOString().slice(0, 10);
+    const endStr = new Date().toISOString().slice(0, 10);
+    console.log(`期間設定: ${startStr} 〜 ${endStr}`);
+
+    await page.evaluate((start, end) => {
+      // パターン1: input[type=date] or id/nameに'start','from','begin'等を含むフィールド
+      const inputs = Array.from(document.querySelectorAll('input'));
+      const dateInputs = inputs.filter(i => {
+        const id = (i.id || '').toLowerCase();
+        const name = (i.name || '').toLowerCase();
+        return i.type === 'date' || id.includes('date') || name.includes('date');
+      });
+
+      // 開始日・終了日のペアを探す
+      for (const input of dateInputs) {
+        const id = (input.id || '').toLowerCase();
+        const name = (input.name || '').toLowerCase();
+        if (id.includes('start') || id.includes('from') || id.includes('begin') || name.includes('start') || name.includes('from')) {
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          nativeInputValueSetter.call(input, start);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if (id.includes('end') || id.includes('to') || name.includes('end') || name.includes('to')) {
+          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          nativeInputValueSetter.call(input, end);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+
+      // パターン2: 日付ピッカーのセレクトボックス（年/月/日）
+      const selects = Array.from(document.querySelectorAll('select'));
+      for (const sel of selects) {
+        const id = (sel.id || '').toLowerCase();
+        if ((id.includes('start') || id.includes('from')) && id.includes('year')) {
+          sel.value = start.split('-')[0];
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        if ((id.includes('start') || id.includes('from')) && id.includes('month')) {
+          sel.value = String(parseInt(start.split('-')[1]));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+    }, startStr, endStr);
+    await new Promise(r => setTimeout(r, 2000));
+
     // 6a: rpp_all_raw
     console.log('Step 6a: rpp_all_raw ダウンロード...');
     await page.evaluate(() => { const r = document.querySelector('#rdReportTypeAllAds'); if (r) r.click(); });
