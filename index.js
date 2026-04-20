@@ -4712,12 +4712,7 @@ function renderSalesTab() {
         if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
       });
     });
-    // Also from orderItems
-    if (D.orderItems) {
-      D.orderItems.forEach(r => {
-        if (r.i && !productMap[r.i]) productMap[r.i] = r.i;
-      });
-    }
+    // orderItemsからは追加しない（all_item_raw/rpp_item_rawにデータがないと全て0になるため）
     Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
       const opt = document.createElement('option');
       opt.value = key;
