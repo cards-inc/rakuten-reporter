@@ -3273,10 +3273,10 @@ async function generateDashboardHtml() {
 
   // ── RPP column matching with flexible names ──
   const rppAllH = rppAllRaw.headers;
-  const rppSpendKey = rppAllH.find(h => h && (h.includes('実績額') || h.includes('実績額(合計)'))) || '実績額';
-  const rppSalesKey = rppAllH.find(h => h && (h.includes('売上金額'))) || '売上金額';
-  const rppClicksKey = rppAllH.find(h => h && (h.includes('クリック数'))) || 'クリック数';
-  const rppOrdersKey = rppAllH.find(h => h && (h.includes('売上件数'))) || '売上件数';
+  const rppSpendKey = rppAllH.find(h => h && (h === '実績額(合計)' || h === '実績額')) || rppAllH.find(h => h && h.includes('実績額') && !h.includes('割引後')) || '実績額';
+  const rppSalesKey = rppAllH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppAllH.find(h => h && h.includes('売上金額')) || '売上金額';
+  const rppClicksKey = rppAllH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppAllH.find(h => h && h.includes('クリック数')) || 'クリック数';
+  const rppOrdersKey = rppAllH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppAllH.find(h => h && h.includes('売上件数')) || '売上件数';
 
   // TDA column matching
   const tdaH = tdaRaw.headers;
@@ -3299,17 +3299,17 @@ async function generateDashboardHtml() {
 
   // RPP item column matching
   const rppItemH = rppItemRaw.headers;
-  const rppItemSpendKey = rppItemH.find(h => h && h.includes('実績額')) || '実績額';
-  const rppItemSalesKey = rppItemH.find(h => h && h.includes('売上金額')) || '売上金額';
-  const rppItemClicksKey = rppItemH.find(h => h && h.includes('クリック数')) || 'クリック数';
-  const rppItemOrdersKey = rppItemH.find(h => h && h.includes('売上件数')) || '売上件数';
+  const rppItemSpendKey = rppItemH.find(h => h && (h === '実績額(合計)' || h === '実績額')) || rppItemH.find(h => h && h.includes('実績額') && !h.includes('新規') && !h.includes('既存')) || '実績額';
+  const rppItemSalesKey = rppItemH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppItemH.find(h => h && h.includes('売上金額')) || '売上金額';
+  const rppItemClicksKey = rppItemH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppItemH.find(h => h && h.includes('クリック数') && !h.includes('新規') && !h.includes('既存')) || 'クリック数';
+  const rppItemOrdersKey = rppItemH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppItemH.find(h => h && h.includes('売上件数')) || '売上件数';
 
   // RPP kw column matching
   const rppKwH = rppKwRaw.headers;
-  const rppKwSpendKey = rppKwH.find(h => h && h.includes('実績額')) || '実績額';
-  const rppKwSalesKey = rppKwH.find(h => h && h.includes('売上金額')) || '売上金額';
-  const rppKwClicksKey = rppKwH.find(h => h && h.includes('クリック数')) || 'クリック数';
-  const rppKwOrdersKey = rppKwH.find(h => h && h.includes('売上件数')) || '売上件数';
+  const rppKwSpendKey = rppKwH.find(h => h && (h === '実績額(合計)' || h === '実績額')) || rppKwH.find(h => h && h.includes('実績額') && !h.includes('新規') && !h.includes('既存')) || '実績額';
+  const rppKwSalesKey = rppKwH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppKwH.find(h => h && h.includes('売上金額')) || '売上金額';
+  const rppKwClicksKey = rppKwH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppKwH.find(h => h && h.includes('クリック数') && !h.includes('新規') && !h.includes('既存')) || 'クリック数';
+  const rppKwOrdersKey = rppKwH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppKwH.find(h => h && h.includes('売上件数')) || '売上件数';
 
   // ── Build structured data for JSON embedding ──
   // all_raw - filter デバイス=すべて
