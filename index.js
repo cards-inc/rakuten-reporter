@@ -3839,6 +3839,7 @@ async function generateDashboardHtml() {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>百福堂_楽天ストアアナリティクス</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"><\/script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"><\/script>
 <style>
 :root {
   --c-primary: #1a3a5c;
@@ -3922,8 +3923,12 @@ body {
 }
 .compare-btn.active { background: var(--c-primary); color: #fff; }
 .main-content { max-width: 1440px; margin: 0 auto; padding: 20px 24px; }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes countUp { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 .tab-panel { display: none; }
-.tab-panel.active { display: block; }
+.tab-panel.active { display: block; animation: fadeIn 0.3s ease-out; }
+.sub-panel { animation: fadeIn 0.25s ease-out; }
 .panel-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--c-text); }
 .cards-grid {
   display: grid; grid-template-columns: repeat(5, 1fr);
@@ -3932,9 +3937,15 @@ body {
 .metric-card {
   background: var(--c-surface); border-radius: var(--radius);
   padding: 18px 20px; box-shadow: var(--shadow-sm);
-  border: 1px solid var(--c-border); transition: all 0.2s; cursor: default;
+  border: 1px solid var(--c-border); transition: all 0.25s cubic-bezier(0.4,0,0.2,1); cursor: default;
+  animation: fadeInUp 0.4s ease-out backwards;
 }
-.metric-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.metric-card:nth-child(1) { animation-delay: 0s; }
+.metric-card:nth-child(2) { animation-delay: 0.05s; }
+.metric-card:nth-child(3) { animation-delay: 0.1s; }
+.metric-card:nth-child(4) { animation-delay: 0.15s; }
+.metric-card:nth-child(5) { animation-delay: 0.2s; }
+.metric-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .metric-label { font-size: 11px; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .metric-value { font-size: 24px; font-weight: 700; color: var(--c-primary); line-height: 1.2; }
 .metric-sub { font-size: 11px; color: var(--c-text-secondary); margin-top: 4px; }
@@ -3946,7 +3957,10 @@ body {
   background: var(--c-surface); border-radius: var(--radius);
   padding: 20px 24px; margin-bottom: 20px;
   box-shadow: var(--shadow-sm); border: 1px solid var(--c-border);
+  animation: fadeInUp 0.4s ease-out backwards;
+  transition: box-shadow 0.2s;
 }
+.section-box:hover { box-shadow: var(--shadow-md); }
 .section-title {
   font-size: 15px; font-weight: 600; margin-bottom: 14px;
   padding-bottom: 8px; border-bottom: 2px solid var(--c-primary);
@@ -4058,14 +4072,13 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="filter-bar-inner">
     <div class="filter-group">
       <span class="filter-label">期間</span>
-      <select id="periodType" class="filter-select" style="width:auto;min-width:80px">
-        <option value="month">月</option>
-        <option value="day">日</option>
+      <select id="periodType" class="filter-select" style="display:none">
+        <option value="day" selected>日</option>
       </select>
-      <select id="monthFilter" class="filter-select"></select>
-      <input type="date" id="dayFilterFrom" class="filter-select" style="display:none;width:auto">
-      <span id="dayFilterSep" style="display:none"> ~ </span>
-      <input type="date" id="dayFilterTo" class="filter-select" style="display:none;width:auto">
+      <select id="monthFilter" class="filter-select" style="display:none"></select>
+      <input type="date" id="dayFilterFrom" class="filter-select" style="width:auto">
+      <span id="dayFilterSep"> 〜 </span>
+      <input type="date" id="dayFilterTo" class="filter-select" style="width:auto">
     </div>
     <div class="filter-group">
       <span class="filter-label">比較</span>
@@ -4083,6 +4096,14 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
+  <div class="section-box">
+    <div class="section-title">売上分解ツリー</div>
+    <div id="salesTreeWrap" style="overflow-x:auto"></div>
+  </div>
+  <div class="section-box">
+    <div class="section-title">日別売上（RPP経由 / 広告外）</div>
+    <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
+  </div>
   <div class="grid-2" style="grid-template-columns:2fr 1fr">
     <div class="section-box">
       <div class="section-title">日次推移</div>
@@ -4100,11 +4121,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <select id="productItemSelect" class="filter-select" style="width:auto;min-width:300px;max-width:500px">
         <option value="">商品を選択してください</option>
       </select>
-      <span class="filter-label" style="margin-left:16px">期間</span>
-      <input type="date" id="productDateFrom" class="filter-select" style="width:auto">
-      <span>〜</span>
-      <input type="date" id="productDateTo" class="filter-select" style="width:auto">
-      <button id="productDateClear" style="padding:4px 10px;font-size:12px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer">クリア</button>
+      <input type="date" id="productDateFrom" style="display:none">
+      <input type="date" id="productDateTo" style="display:none">
+      <button id="productDateClear" style="display:none">クリア</button>
     </div>
     <div id="productMonthlyWrap" style="overflow-x:auto"></div>
   </div>
@@ -4295,7 +4314,7 @@ const safe = s => {
 // ── State ──
 let currentMonth = 'all';
 let compareMode = 'mom'; // mom, yoy
-let periodType = 'month'; // month, day
+let periodType = 'day'; // always day (date range)
 let dayFrom = null;
 let dayTo = null;
 const chartInstances = {};
@@ -4503,6 +4522,157 @@ function renderSalesTab() {
         plugins: {
           legend: { position: 'bottom' },
           tooltip: { callbacks: { label: ctx => ctx.label + ': ' + comma(ctx.raw) + '人 (' + (totalNew + totalRepeat > 0 ? (ctx.raw / (totalNew + totalRepeat) * 100).toFixed(1) : 0) + '%)' } }
+        }
+      }
+    });
+  }
+
+  // ── 売上分解ツリー ──
+  const rppData = getMonthData(D.rppByMonth, currentMonth);
+  const rppSales = sumField(rppData, 'sales');
+  const rppClicks = sumField(rppData, 'clicks');
+  const rppOrders = sumField(rppData, 'orders');
+  const nonRppSales = totalSales - rppSales;
+  const nonRppAccess = totalAccess - rppClicks;
+  const nonRppOrders = totalOrders - rppOrders;
+  const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
+  const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
+  const nonRppCvr = nonRppAccess > 0 ? (nonRppOrders / nonRppAccess * 100) : 0;
+  const nonRppUnitPrice = nonRppOrders > 0 ? Math.round(nonRppSales / nonRppOrders) : 0;
+
+  // 前月・前年比
+  const prevMonthYm = getCompareMonth(currentMonth, 'mom');
+  const prevYearYm = getCompareMonth(currentMonth, 'yoy');
+  function getTreeCompare(ym) {
+    if (!ym) return null;
+    const d = getMonthData(D.allByMonth, ym);
+    const r = getMonthData(D.rppByMonth, ym);
+    const s = sumField(d, 'sales'), o = sumField(d, 'orders'), a = sumField(d, 'access');
+    const rs = sumField(r, 'sales'), rc = sumField(r, 'clicks'), ro = sumField(r, 'orders');
+    return {
+      sales: s, rppSales: rs, nonRppSales: s - rs,
+      rppClicks: rc, rppOrders: ro, rppCvr: rc > 0 ? (ro/rc*100) : 0, rppUnitPrice: ro > 0 ? Math.round(rs/ro) : 0,
+      nonRppAccess: a - rc, nonRppOrders: o - ro, nonRppCvr: (a-rc) > 0 ? ((o-ro)/(a-rc)*100) : 0, nonRppUnitPrice: (o-ro) > 0 ? Math.round((s-rs)/(o-ro)) : 0,
+      access: a, cvr: a > 0 ? (o/a*100) : 0, unitPrice: o > 0 ? Math.round(s/o) : 0,
+    };
+  }
+  const prevM = getTreeCompare(prevMonthYm);
+  const prevY = getTreeCompare(prevYearYm);
+
+  function treeRatio(cur, prev) {
+    if (!prev || prev === 0) return '-';
+    return (cur / prev * 100).toFixed(1) + '%';
+  }
+  function treeBox(title, value, prevMVal, prevYVal, color) {
+    const bg = color || 'var(--c-primary)';
+    return '<div style="background:' + bg + ';color:#fff;border-radius:8px;padding:10px 16px;text-align:center;min-width:130px">' +
+      '<div style="font-size:11px;opacity:0.85">' + title + '</div>' +
+      '<div style="font-size:18px;font-weight:700;margin:4px 0">' + value + '</div>' +
+      '<div style="font-size:10px;opacity:0.8">前月比 ' + (prevMVal || '-') + '</div>' +
+      '<div style="font-size:10px;opacity:0.8">前年比 ' + (prevYVal || '-') + '</div>' +
+    '</div>';
+  }
+
+  const monthLabel = D.monthLabels[currentMonth] || currentMonth;
+  const treeHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">' +
+    // Level 1: 月売上
+    '<div style="display:flex;justify-content:center">' +
+    treeBox(monthLabel + '売上', yen(totalSales), treeRatio(totalSales, prevM?.sales), treeRatio(totalSales, prevY?.sales)) +
+    '</div>' +
+    '<div style="width:2px;height:16px;background:#1a3a5c;margin:0 auto"></div>' +
+    // Level 2: RPP / 非RPP
+    '<div style="display:flex;justify-content:center;gap:40px;position:relative">' +
+    '<div style="position:absolute;top:0;left:25%;right:25%;height:1px;background:#1a3a5c"></div>' +
+    treeBox('RPP広告売上', yen(rppSales), treeRatio(rppSales, prevM?.rppSales), treeRatio(rppSales, prevY?.rppSales)) +
+    treeBox('非RPP広告売上', yen(nonRppSales), treeRatio(nonRppSales, prevM?.nonRppSales), treeRatio(nonRppSales, prevY?.nonRppSales)) +
+    '</div>' +
+    '<div style="display:flex;justify-content:center;gap:8px;position:relative">' +
+    // Level 3 left: RPP breakdown
+    treeBox('アクセス数', comma(rppClicks), treeRatio(rppClicks, prevM?.rppClicks), treeRatio(rppClicks, prevY?.rppClicks)) +
+    treeBox('転換率', pct(rppCvr), treeRatio(rppCvr, prevM?.rppCvr), treeRatio(rppCvr, prevY?.rppCvr)) +
+    treeBox('客単価', yen(rppUnitPrice), treeRatio(rppUnitPrice, prevM?.rppUnitPrice), treeRatio(rppUnitPrice, prevY?.rppUnitPrice)) +
+    // Level 3 right: non-RPP breakdown
+    treeBox('アクセス人数', comma(nonRppAccess), treeRatio(nonRppAccess, prevM?.nonRppAccess), treeRatio(nonRppAccess, prevY?.nonRppAccess)) +
+    treeBox('転換率', pct(nonRppCvr), treeRatio(nonRppCvr, prevM?.nonRppCvr), treeRatio(nonRppCvr, prevY?.nonRppCvr)) +
+    treeBox('客単価', yen(nonRppUnitPrice), treeRatio(nonRppUnitPrice, prevM?.nonRppUnitPrice), treeRatio(nonRppUnitPrice, prevY?.nonRppUnitPrice)) +
+    '</div></div>';
+  document.getElementById('salesTreeWrap').innerHTML = treeHtml;
+
+  // ── 日別 RPP経由/広告外 積み上げチャート ──
+  destroyChart('chartDailyRppSplit');
+  const rppSorted = [...rppData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  // Build daily map: date -> { rppSales, totalSales }
+  const dailyMap = {};
+  sorted.forEach(r => {
+    const d = r.date.replace(/\\//g, '-');
+    dailyMap[d] = { total: r.sales, rpp: 0 };
+  });
+  rppSorted.forEach(r => {
+    const d = String(r.date).replace(/\\//g, '-');
+    if (dailyMap[d]) dailyMap[d].rpp = r.sales;
+    else dailyMap[d] = { total: r.sales, rpp: r.sales };
+  });
+  const dailyDates = Object.keys(dailyMap).sort();
+  if (dailyDates.length > 0) {
+    const dayLabels = dailyDates.map(d => { const p = d.split(/[-\\/]/); return p.length >= 3 ? parseInt(p[2]) : d; });
+    const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
+    const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
+
+    // Rakuten event periods detection
+    function getRakutenEvents(dates) {
+      if (!dates.length) return [];
+      const events = [];
+      // Parse month from first date
+      const firstDate = dates[0];
+      const parts = firstDate.split(/[-\\/]/);
+      const year = parseInt(parts[0]);
+      const month = parseInt(parts[1]);
+      // Standard Rakuten events by month
+      // スーパーSALE: 3,6,9,12月の4-11日
+      // お買い物マラソン: 毎月（SALE月以外）
+      // ワンダフルデー: 毎月1日
+      // 5と0のつく日: 5,10,15,20,25,30日
+      const isSaleMonth = [3,6,9,12].includes(month);
+      if (isSaleMonth) {
+        events.push({ start: 4, end: 11, label: 'スーパーSALE' });
+      }
+      // お買い物マラソンは通常19-24日頃（月による）
+      if (!isSaleMonth) {
+        events.push({ start: 19, end: 24, label: 'お買い物マラソン' });
+      }
+      return events;
+    }
+    const evts = getRakutenEvents(dailyDates);
+
+    // Create background bands for events
+    const annotations = {};
+    evts.forEach((evt, i) => {
+      annotations['evt' + i] = {
+        type: 'box', xMin: evt.start - 1 - 0.5, xMax: evt.end - 1 + 0.5,
+        backgroundColor: 'rgba(200,200,200,0.15)', borderWidth: 0,
+        label: { display: true, content: evt.label, position: 'start', font: { size: 11, weight: 'bold' }, color: '#666', padding: 4 }
+      };
+    });
+
+    chartInstances['chartDailyRppSplit'] = new Chart(document.getElementById('chartDailyRppSplit'), {
+      type: 'bar',
+      data: {
+        labels: dayLabels,
+        datasets: [
+          { label: 'RPP経由売上金額', data: rppDaySales, backgroundColor: 'rgba(66,133,244,0.7)', stack: 'a' },
+          { label: '広告外売上金額', data: nonRppDaySales, backgroundColor: 'rgba(234,179,8,0.7)', stack: 'a' },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: { mode: 'index', callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw), footer: items => '合計: ' + yen(items.reduce((s, i) => s + i.raw, 0)) } },
+          annotation: { annotations }
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } }
         }
       }
     });
@@ -5505,32 +5675,21 @@ D.months.forEach(ym => {
 });
 allDates.sort().reverse();
 if (allDates.length > 0) {
-  dayFilterTo.value = allDates[0];
-  dayFilterFrom.value = allDates.length > 7 ? allDates[6] : allDates[allDates.length - 1];
+  // Default: latest month's full range
+  const latestDate = allDates[0]; // most recent date
+  const latestYm = latestDate.substring(0, 7);
+  const firstOfMonth = latestYm + '-01';
+  dayFilterTo.value = latestDate;
+  dayFilterFrom.value = firstOfMonth;
+  dayFrom = firstOfMonth;
+  dayTo = latestDate;
+  // Also set currentMonth for compare calculations
+  currentMonth = latestYm;
 }
-
-periodTypeSelect.addEventListener('change', function() {
-  periodType = this.value;
-  if (periodType === 'day') {
-    monthSelect.style.display = 'none';
-    dayFilterFrom.style.display = '';
-    dayFilterSep.style.display = '';
-    dayFilterTo.style.display = '';
-    dayFrom = dayFilterFrom.value;
-    dayTo = dayFilterTo.value;
-  } else {
-    monthSelect.style.display = '';
-    dayFilterFrom.style.display = 'none';
-    dayFilterSep.style.display = 'none';
-    dayFilterTo.style.display = 'none';
-    dayFrom = null;
-    dayTo = null;
-  }
-  renderAll();
-});
 
 dayFilterFrom.addEventListener('change', function() {
   dayFrom = this.value;
+  if (dayFrom) currentMonth = dayFrom.substring(0, 7);
   renderAll();
 });
 dayFilterTo.addEventListener('change', function() {
