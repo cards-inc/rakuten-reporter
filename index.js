@@ -4019,7 +4019,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
     <div class="main-tab" data-tab="tab-acq">集客チャネル</div>
-    <div class="main-tab" data-tab="tab-repeat">リピート/F2分析</div>
+    <div class="main-tab" data-tab="tab-repeat">リピート</div>
     <div class="main-tab" data-tab="tab-basket">バスケット分析</div>
     <div class="main-tab" data-tab="tab-ltv">LTV分析</div>
   </div>
@@ -4065,6 +4065,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="section-title">アクセス/CVR 推移</div>
       <div class="chart-wrap chart-sm"><canvas id="chartAccessCvr"></canvas></div>
     </div>
+  </div>
+  <div class="section-box" style="max-width:400px">
+    <div class="section-title">新規/リピート購入比率</div>
+    <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
   </div>
 </div>
 
@@ -4143,9 +4147,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
 </div>
 
-<!-- Tab 4: リピート/F2分析 -->
+<!-- Tab 4: リピート -->
 <div class="tab-panel" id="tab-repeat">
-  <div class="panel-title">リピート/F2分析</div>
+  <div class="panel-title">リピート分析</div>
   <div id="repeatCards" class="cards-grid"></div>
   <div class="grid-2">
     <div class="section-box">
@@ -4478,6 +4482,25 @@ function renderSalesTab() {
       }
     });
   }
+
+  // New/Repeat pie chart
+  destroyChart('chartNewRepeatPie');
+  if (totalNew > 0 || totalRepeat > 0) {
+    chartInstances['chartNewRepeatPie'] = new Chart(document.getElementById('chartNewRepeatPie'), {
+      type: 'doughnut',
+      data: {
+        labels: ['新規購入者', 'リピート購入者'],
+        datasets: [{ data: [totalNew, totalRepeat], backgroundColor: ['#1a3a5c', '#e8710a'] }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: { callbacks: { label: ctx => ctx.label + ': ' + comma(ctx.raw) + '人 (' + (totalNew + totalRepeat > 0 ? (ctx.raw / (totalNew + totalRepeat) * 100).toFixed(1) : 0) + '%)' } }
+        }
+      }
+    });
+  }
 }
 
 function renderAdsTab() {
@@ -4715,10 +4738,10 @@ function renderAcqTab() {
   document.getElementById('lineKpiRow').innerHTML = [
     { label: '配信数', value: comma(lineData.length) + '回' },
     { label: '配信通数', value: comma(lineTotalSent) },
-    { label: '��均開封率', value: pct1(lineAvgOpenRate) },
-    { label: '���問者数', value: comma(lineTotalVisitors) },
+    { label: '平均開封率', value: pct1(lineAvgOpenRate) },
+    { label: '訪問者数', value: comma(lineTotalVisitors) },
     { label: '転換率', value: pct(lineAvgCvr) },
-    { label: '���上合計', value: yen(lineTotalSales) },
+    { label: '売上合計', value: yen(lineTotalSales) },
     { label: '売上/通', value: yen(Math.round(lineSalesPerSend * 10) / 10) },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
@@ -4781,7 +4804,7 @@ function renderAcqTab() {
   const lineForTable = [...lineData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('lineTableWrap', [
     { key: 'date', label: '配信日時', fmt: v => safe(String(v).substring(0, 16)) },
-    { key: 'title', label: '���イトル', fmt: v => safe(String(v).substring(0, 35)) },
+    { key: 'title', label: 'タイトル', fmt: v => safe(String(v).substring(0, 35)) },
     { key: 'sent', label: '配信通数', fmt: v => comma(v) },
     { key: 'openRate', label: '開封率', fmt: v => safe(v) },
     { key: 'visitors', label: '訪問者', fmt: v => comma(v) },
@@ -4804,7 +4827,7 @@ function renderAcqTab() {
   buildTable('afiByRateTableWrap', [
     { key: 'rate', label: '料率', fmt: v => safe(v) },
     { key: 'count', label: '件数', fmt: v => comma(v) },
-    { key: 'sales', label: '���上', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
   ], D.afiByRateRows || [], { limit: 20 });
 
@@ -4841,10 +4864,10 @@ function renderAcqTab() {
 
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('mailTableWrap', [
-    { key: 'date', label: '配信日��', fmt: v => safe(String(v).substring(0, 16)) },
+    { key: 'date', label: '配信日時', fmt: v => safe(String(v).substring(0, 16)) },
     { key: 'subject', label: '件名', fmt: v => safe(String(v).substring(0, 40)) },
-    { key: 'sent', label: '���信数', fmt: v => comma(v) },
-    { key: 'opened', label: '開��数', fmt: v => comma(v) },
+    { key: 'sent', label: '配信数', fmt: v => comma(v) },
+    { key: 'opened', label: '開封数', fmt: v => comma(v) },
     { key: 'openRate', label: '開封率', fmt: v => safe(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
