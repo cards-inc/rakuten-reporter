@@ -3202,7 +3202,7 @@ async function generateDashboardHtml() {
     }
   };
 
-  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, cpaRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw] = await Promise.all([
+  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, cpaRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw, masterRaw] = await Promise.all([
     readSheet('all_raw'),
     readSheet('rpp_all_raw'),
     readSheet('rpp_item_raw'),
@@ -3215,6 +3215,7 @@ async function generateDashboardHtml() {
     readSheet('afi_raw'),
     readSheet('all_item_raw'),
     readSheet('order_raw'),
+    readSheet('master'),
   ]);
 
   // order_rawデバッグ
@@ -3368,7 +3369,7 @@ async function generateDashboardHtml() {
     if (!rppItemByMonth[ym]) rppItemByMonth[ym] = [];
     rppItemByMonth[ym].push({
       date: toDateStr(r['日付']),
-      manageNum: r['商品管理番号'] || '',
+      manageNum: (r['商品管理番号'] || '').trim(),
       name: r['商品名'] || r['商品管理番号'] || '不明',
       spend: num(r[rppItemSpendKey]),
       sales: num(r[rppItemSalesKey]),
@@ -3491,6 +3492,11 @@ async function generateDashboardHtml() {
 
   // all_item_raw by month
   const allItemByMonth = {};
+  console.log(`Dashboard all_item_raw: headers=${allItemRaw.headers.join(',')}, rows=${allItemRaw.data.length}`);
+  if (allItemRaw.data.length > 0) {
+    const s = allItemRaw.data[0];
+    console.log(`Dashboard all_item_raw sample: 商品管理番号=${s['商品管理番号']}, 商品名=${s['商品名']}, 売上=${s['売上']}, 売上金額=${s['売上金額']}, アクセス人数=${s['アクセス人数']}, 売上件数=${s['売上件数']}`);
+  }
   allItemRaw.data.forEach(r => {
     const ymRaw = r['取得月'] || r['日付'] || '';
     const ym = toYM(ymRaw);
@@ -3502,7 +3508,7 @@ async function generateDashboardHtml() {
     const aiCvrVal = r['転換率'] || r[allItemRaw.headers.find(h => h && h.includes('転換率')) || '__none__'] || 0;
     const aiUnitPriceVal = r['客単価'] || r[allItemRaw.headers.find(h => h && h.includes('客単価')) || '__none__'] || 0;
     allItemByMonth[ym].push({
-      manageNum: r['商品管理番号'] || '',
+      manageNum: (r['商品管理番号'] || '').trim(),
       name: r['商品名'] || r['商品管理番号'] || '不明',
       access: num(aiAccessVal),
       sales: num(aiSalesVal),
@@ -3511,6 +3517,15 @@ async function generateDashboardHtml() {
       unitPrice: num(aiUnitPriceVal),
     });
   });
+
+  // master sheet - 商品管理番号→商品名マップ
+  const masterProducts = {};
+  masterRaw.data.forEach(r => {
+    const mn = r['商品管理番号'] || '';
+    const name = r['商品名'] || '';
+    if (mn) masterProducts[mn] = name || mn;
+  });
+  console.log(`Dashboard master: ${Object.keys(masterProducts).length} products loaded`);
 
   // order_raw - build structured data
   const orderRows = orderRaw.data;
@@ -3795,6 +3810,7 @@ async function generateDashboardHtml() {
     afiByMonth,
     mailData,
     allItemByMonth,
+    masterProducts,
     hasOrders: orders.length > 0,
     // Compact order data for client-side filtering (email, item, date, orderNum)
     orderItems: orders.map(r => ({ e: r.email, i: r.manageNum || r.itemName, d: r.date, n: r.orderNum, p: r.price })),
@@ -4696,10 +4712,11 @@ function renderSalesTab() {
     });
   }
 
-  // Product selector population - build name↔manageNum map
+  // Product selector population - masterシートの商品名を使い、データがある商品のみ表示
   const pSel = document.getElementById('productItemSelect');
   if (pSel.options.length <= 1) {
-    const productMap = {}; // manageNum -> name
+    const productMap = {}; // manageNum -> name (データがある商品のみ)
+    // all_item_raw / rpp_item_rawからデータのある商品を収集
     D.months.forEach(ym => {
       (D.allItemByMonth[ym] || []).forEach(r => {
         const key = r.manageNum || r.name;
@@ -4712,7 +4729,12 @@ function renderSalesTab() {
         if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
       });
     });
-    // orderItemsからは追加しない（all_item_raw/rpp_item_rawにデータがないと全て0になるため）
+    // masterシートの商品名で上書き（masterが正式名称）
+    if (D.masterProducts) {
+      Object.keys(productMap).forEach(key => {
+        if (D.masterProducts[key]) productMap[key] = D.masterProducts[key];
+      });
+    }
     Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
       const opt = document.createElement('option');
       opt.value = key;
