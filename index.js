@@ -4034,7 +4034,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
         <option value="day">日</option>
       </select>
       <select id="monthFilter" class="filter-select"></select>
-      <input type="date" id="dayFilter" class="filter-select" style="display:none;width:auto">
+      <input type="date" id="dayFilterFrom" class="filter-select" style="display:none;width:auto">
+      <span id="dayFilterSep" style="display:none"> ~ </span>
+      <input type="date" id="dayFilterTo" class="filter-select" style="display:none;width:auto">
     </div>
     <div class="filter-group">
       <span class="filter-label">比較</span>
@@ -4056,16 +4058,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="section-title">日次推移</div>
     <div class="chart-wrap chart-md"><canvas id="chartSalesDaily"></canvas></div>
   </div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">売上/件数 推移</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartSalesOrders"></canvas></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">アクセス/CVR 推移</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartAccessCvr"></canvas></div>
-    </div>
-  </div>
   <div class="section-box" style="max-width:400px">
     <div class="section-title">新規/リピート購入比率</div>
     <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
@@ -4076,13 +4068,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel" id="tab-ads">
   <div class="panel-title">広告分析</div>
   <div id="adCards" class="cards-grid"></div>
-  <div class="section-box">
-    <div class="section-title">広告チャネル別構成</div>
-    <div class="grid-2">
-      <div class="chart-wrap chart-sm"><canvas id="chartAdSpendPie"></canvas></div>
-      <div class="chart-wrap chart-sm"><canvas id="chartAdSalesPie"></canvas></div>
-    </div>
-  </div>
   <div class="section-box">
     <div class="sub-tabs" id="adSubTabs">
       <div class="sub-tab active" data-subtab="ad-rpp-all">RPP全体</div>
@@ -4242,7 +4227,8 @@ const safe = s => {
 let currentMonth = 'all';
 let compareMode = 'mom'; // mom, yoy
 let periodType = 'month'; // month, day
-let currentDay = null;
+let dayFrom = null;
+let dayTo = null;
 const chartInstances = {};
 
 function destroyChart(id) {
@@ -4293,14 +4279,13 @@ function changeHtml(changeVal) {
 
 // ── Data getters ──
 function getMonthData(dataByMonth, ym) {
-  // 日次モード: currentDayから月を自動導出
-  if (periodType === 'day' && currentDay) {
-    const dayParts = currentDay.split('-');
-    const dayYm = dayParts.length >= 2 ? dayParts[0] + '-' + dayParts[1] : ym;
-    const monthData = dataByMonth[dayYm] || [];
-    return monthData.filter(r => {
+  // 日次（期間）モード: dayFrom~dayToの範囲でフィルタ
+  if (periodType === 'day' && dayFrom && dayTo) {
+    const all = [];
+    Object.values(dataByMonth).forEach(arr => all.push(...arr));
+    return all.filter(r => {
       const d = (r.date || '').replace(/\\//g, '-');
-      return d === currentDay;
+      return d >= dayFrom && d <= dayTo;
     });
   }
   if (ym === 'all') {
@@ -4390,13 +4375,11 @@ function renderSalesTab() {
   const cAvgPrice = cmpData.length && sumField(cmpData, 'orders') > 0 ? sumField(cmpData, 'sales') / sumField(cmpData, 'orders') : null;
 
   const cards = [
-    { label: '売上金額', value: yen(totalSales), change: calcChange(totalSales, cTotalSales) },
+    { label: '売上', value: yen(totalSales), change: calcChange(totalSales, cTotalSales) },
     { label: '売上件数', value: comma(totalOrders), change: calcChange(totalOrders, cTotalOrders) },
-    { label: '客単価', value: yen(Math.round(avgPrice)), change: calcChange(avgPrice, cAvgPrice) },
-    { label: '転換率', value: pct(avgCvr), change: cAvgCvr !== null ? calcChange(avgCvr, cAvgCvr) : null },
     { label: 'アクセス人数', value: comma(totalAccess), change: calcChange(totalAccess, cTotalAccess) },
-    { label: '新規購入者', value: comma(totalNew) },
-    { label: 'リピート購入者', value: comma(totalRepeat) },
+    { label: '転換率', value: pct(avgCvr), change: cAvgCvr !== null ? calcChange(avgCvr, cAvgCvr) : null },
+    { label: '客単価', value: yen(Math.round(avgPrice)), change: calcChange(avgPrice, cAvgPrice) },
   ];
   document.getElementById('salesCards').innerHTML = cards.map(c =>
     '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
@@ -4432,52 +4415,6 @@ function renderSalesTab() {
         scales: {
           y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
           y1: { position: 'right', grid: { drawOnChartArea: false } }
-        }
-      }
-    });
-  }
-
-  // Sales/Orders bar+line
-  destroyChart('chartSalesOrders');
-  if (sorted.length > 0) {
-    chartInstances['chartSalesOrders'] = new Chart(document.getElementById('chartSalesOrders'), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: '売上金額', data: salesArr, backgroundColor: 'rgba(26,58,92,0.6)', yAxisID: 'y', order: 1 },
-          { label: '件数', data: ordersArr, type: 'line', borderColor: '#0d904f', yAxisID: 'y1', tension: 0.3, pointRadius: 1, order: 0 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true } } },
-        scales: {
-          y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
-          y1: { position: 'right', grid: { drawOnChartArea: false } }
-        }
-      }
-    });
-  }
-
-  // Access/CVR
-  destroyChart('chartAccessCvr');
-  if (sorted.length > 0) {
-    chartInstances['chartAccessCvr'] = new Chart(document.getElementById('chartAccessCvr'), {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [
-          { label: 'アクセス', data: accessArr, backgroundColor: 'rgba(26,115,232,0.5)', yAxisID: 'y', order: 1 },
-          { label: 'CVR(%)', data: sorted.map(r => r.cvr), type: 'line', borderColor: '#e8710a', yAxisID: 'y1', tension: 0.3, pointRadius: 1, order: 0 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true } } },
-        scales: {
-          y: { position: 'left' },
-          y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' } }
         }
       }
     });
@@ -4537,42 +4474,21 @@ function renderAdsTab() {
     cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales');
   }
 
+  // TACOS = 広告費 / 全体売上
+  const storeSalesData = getMonthData(D.allByMonth, currentMonth);
+  const storeTotalSales = sumField(storeSalesData, 'sales');
+  const tacos = storeTotalSales > 0 ? (totalSpend / storeTotalSales * 100) : 0;
+
   document.getElementById('adCards').innerHTML = [
     { label: '広告費合計', value: yen(totalSpend), change: calcChange(totalSpend, cTotalSpend) },
     { label: '広告経由売上', value: yen(totalSales), change: calcChange(totalSales, cTotalSales) },
     { label: '全体ROAS', value: totalRoas.toFixed(0) + '%' },
-    { label: 'RPP費用', value: yen(rppSpend), sub: 'ROAS ' + (rppSpend > 0 ? (rppSales/rppSpend*100).toFixed(0) : 0) + '%' },
-    { label: 'TDA費用', value: yen(tdaSpend), sub: 'ROAS ' + (tdaSpend > 0 ? (tdaSales/tdaSpend*100).toFixed(0) : 0) + '%' },
-    { label: 'その他広告費', value: yen(adSpend), sub: 'ROAS ' + (adSpend > 0 ? (adSales/adSpend*100).toFixed(0) : 0) + '%' },
+    { label: 'TACOS', value: tacos.toFixed(1) + '%', sub: '広告費/売上' },
   ].map(c =>
     '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' +
     (c.sub ? '<div class="metric-sub">' + c.sub + '</div>' : '') +
     (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
   ).join('');
-
-  // Pie charts
-  destroyChart('chartAdSpendPie');
-  if (totalSpend > 0) {
-    chartInstances['chartAdSpendPie'] = new Chart(document.getElementById('chartAdSpendPie'), {
-      type: 'doughnut',
-      data: {
-        labels: ['RPP', 'TDA', '楽天広告'],
-        datasets: [{ data: [rppSpend, tdaSpend, adSpend], backgroundColor: ['#1a3a5c', '#2196F3', '#e8710a'] }]
-      },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '広告費構成' }, legend: { position: 'bottom' } } }
-    });
-  }
-  destroyChart('chartAdSalesPie');
-  if (totalSales > 0) {
-    chartInstances['chartAdSalesPie'] = new Chart(document.getElementById('chartAdSalesPie'), {
-      type: 'doughnut',
-      data: {
-        labels: ['RPP', 'TDA', '楽天広告'],
-        datasets: [{ data: [rppSales, tdaSales, adSales], backgroundColor: ['#1a3a5c', '#2196F3', '#e8710a'] }]
-      },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '売上構成' }, legend: { position: 'bottom' } } }
-    });
-  }
 
   // RPP KPIs
   const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
@@ -5119,7 +5035,9 @@ document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
 
 // Period type toggle (月/日)
 const periodTypeSelect = document.getElementById('periodType');
-const dayFilter = document.getElementById('dayFilter');
+const dayFilterFrom = document.getElementById('dayFilterFrom');
+const dayFilterTo = document.getElementById('dayFilterTo');
+const dayFilterSep = document.getElementById('dayFilterSep');
 // 日付の選択肢を設定（all_rawの全日付を収集、YYYY-MM-DD形式に正規化）
 const allDates = [];
 D.months.forEach(ym => {
@@ -5131,24 +5049,37 @@ D.months.forEach(ym => {
   });
 });
 allDates.sort().reverse();
-if (allDates.length > 0) dayFilter.value = allDates[0];
+if (allDates.length > 0) {
+  dayFilterTo.value = allDates[0];
+  dayFilterFrom.value = allDates.length > 7 ? allDates[6] : allDates[allDates.length - 1];
+}
 
 periodTypeSelect.addEventListener('change', function() {
   periodType = this.value;
   if (periodType === 'day') {
     monthSelect.style.display = 'none';
-    dayFilter.style.display = '';
-    currentDay = dayFilter.value;
+    dayFilterFrom.style.display = '';
+    dayFilterSep.style.display = '';
+    dayFilterTo.style.display = '';
+    dayFrom = dayFilterFrom.value;
+    dayTo = dayFilterTo.value;
   } else {
     monthSelect.style.display = '';
-    dayFilter.style.display = 'none';
-    currentDay = null;
+    dayFilterFrom.style.display = 'none';
+    dayFilterSep.style.display = 'none';
+    dayFilterTo.style.display = 'none';
+    dayFrom = null;
+    dayTo = null;
   }
   renderAll();
 });
 
-dayFilter.addEventListener('change', function() {
-  currentDay = this.value;
+dayFilterFrom.addEventListener('change', function() {
+  dayFrom = this.value;
+  renderAll();
+});
+dayFilterTo.addEventListener('change', function() {
+  dayTo = this.value;
   renderAll();
 });
 
