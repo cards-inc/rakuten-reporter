@@ -3362,7 +3362,8 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!rppItemByMonth[ym]) rppItemByMonth[ym] = [];
     rppItemByMonth[ym].push({
-      name: r['商品名'] || r['商品ページURL'] || r['商品管理番号'] || '不明',
+      manageNum: r['商品管理番号'] || '',
+      name: r['商品名'] || r['商品管理番号'] || '不明',
       spend: num(r[rppItemSpendKey]),
       sales: num(r[rppItemSalesKey]),
       clicks: num(r[rppItemClicksKey]),
@@ -3474,13 +3475,19 @@ async function generateDashboardHtml() {
     const ym = toYM(ymRaw);
     if (!ym) return;
     if (!allItemByMonth[ym]) allItemByMonth[ym] = [];
+    const aiSalesVal = r['売上'] || r['売上金額'] || r[allItemRaw.headers.find(h => h && (h === '売上' || h === '売上金額')) || '__none__'] || 0;
+    const aiOrdersVal = r['売上件数'] || r[allItemRaw.headers.find(h => h && h.includes('売上件数')) || '__none__'] || 0;
+    const aiAccessVal = r['アクセス人数'] || r[allItemRaw.headers.find(h => h && h.includes('アクセス')) || '__none__'] || 0;
+    const aiCvrVal = r['転換率'] || r[allItemRaw.headers.find(h => h && h.includes('転換率')) || '__none__'] || 0;
+    const aiUnitPriceVal = r['客単価'] || r[allItemRaw.headers.find(h => h && h.includes('客単価')) || '__none__'] || 0;
     allItemByMonth[ym].push({
       manageNum: r['商品管理番号'] || '',
-      name: r['商品名'] || r['商品ページURL'] || r['商品管理番号'] || '不明',
-      access: num(r['アクセス人数'] || r[allItemRaw.headers.find(h => h && h.includes('アクセス')) || '__none__']),
-      sales: num(r['売上金額'] || r[allItemRaw.headers.find(h => h && h.includes('売上金額')) || '__none__']),
-      orders: num(r['売上件数'] || r[allItemRaw.headers.find(h => h && h.includes('売上件数')) || r[allItemRaw.headers.find(h => h && h.includes('転換数')) || '__none__'] || '__none__']),
-      cvr: num(r['転換率'] || r[allItemRaw.headers.find(h => h && h.includes('転換率')) || '__none__']),
+      name: r['商品名'] || r['商品管理番号'] || '不明',
+      access: num(aiAccessVal),
+      sales: num(aiSalesVal),
+      orders: num(aiOrdersVal),
+      cvr: num(aiCvrVal),
+      unitPrice: num(aiUnitPriceVal),
     });
   });
 
@@ -4476,7 +4483,9 @@ function renderSalesTab() {
         if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
       });
       (D.rppItemByMonth[ym] || []).forEach(r => {
-        if (r.name && !productMap[r.name]) productMap[r.name] = r.name;
+        const key = r.manageNum || r.name;
+        if (key && !productMap[key]) productMap[key] = r.name || key;
+        if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
       });
     });
     // Also from orderItems
@@ -4515,24 +4524,34 @@ function renderProductMonthly() {
     const sales = items.reduce((s, r) => s + r.sales, 0);
     const access = items.reduce((s, r) => s + r.access, 0);
     const orders = items.reduce((s, r) => s + r.orders, 0);
-    const cvr = access > 0 ? (orders / access * 100) : 0;
-    const unitPrice = orders > 0 ? Math.round(sales / orders) : 0;
+    const cvr = items.length > 0 ? items[0].cvr : 0;
+    const unitPrice = items.length > 0 ? items[0].unitPrice : 0;
 
-    // RPP item data
-    const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.name === selected);
-    const rppSpend = rppItems.reduce((s, r) => s + r.spend, 0);
+    // RPP item data - match by manageNum or name
+    const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
     const rppSales = rppItems.reduce((s, r) => s + r.sales, 0);
     const rppClicks = rppItems.reduce((s, r) => s + r.clicks, 0);
     const rppOrders = rppItems.reduce((s, r) => s + r.orders, 0);
+    const rppSpend = rppItems.reduce((s, r) => s + r.spend, 0);
+
+    // RPP広告以外
+    const nonRppSales = sales - rppSales;
+    const nonRppAccess = access - rppClicks;
+    const nonRppOrders = orders - rppOrders;
+
+    // 転換率
     const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
+    const nonRppCvr = nonRppAccess > 0 ? (nonRppOrders / nonRppAccess * 100) : 0;
+
+    // 客単価
     const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
+    const nonRppUnitPrice = nonRppOrders > 0 ? Math.round(nonRppSales / nonRppOrders) : 0;
+
     const rppCpc = rppClicks > 0 ? Math.round(rppSpend / rppClicks) : 0;
     const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
-    const rppSalesRatio = sales > 0 ? (rppSales / sales * 100) : 0;
-    const rppAccessRatio = access > 0 ? (rppClicks / access * 100) : 0;
     const tacos = sales > 0 ? (rppSpend / sales * 100) : 0;
 
-    return { sales, access, orders, cvr, unitPrice, rppSpend, rppSales, rppClicks, rppOrders, rppCvr, rppUnitPrice, rppCpc, rppRoas, rppSalesRatio, rppAccessRatio, tacos };
+    return { sales, access, orders, cvr, unitPrice, rppSpend, rppSales, rppClicks, rppOrders, rppCvr, rppUnitPrice, rppCpc, rppRoas, nonRppSales, nonRppAccess, nonRppCvr, nonRppUnitPrice, tacos };
   });
 
   // MoM change helper
@@ -4545,18 +4564,20 @@ function renderProductMonthly() {
 
   const metricDefs = [
     { label: '売上', key: 'sales', fmt: v => yen(v) },
-    { label: 'RPP広告売上', key: 'rppSales', fmt: v => yen(v) },
-    { label: 'RPP売上比率', key: 'rppSalesRatio', fmt: v => v.toFixed(1) + '%' },
+    { label: 'RPP広告売上', key: 'rppSales', fmt: v => yen(v), rpp: true },
+    { label: 'RPP広告以外売上', key: 'nonRppSales', fmt: v => yen(v), rpp: true },
     { label: 'アクセス数', key: 'access', fmt: v => comma(v) },
-    { label: 'RPPクリック', key: 'rppClicks', fmt: v => comma(v) },
-    { label: 'RPPアクセス比率', key: 'rppAccessRatio', fmt: v => v.toFixed(1) + '%' },
+    { label: 'RPP広告アクセス数', key: 'rppClicks', fmt: v => comma(v), rpp: true },
+    { label: 'RPP広告以外アクセス数', key: 'nonRppAccess', fmt: v => comma(v), rpp: true },
     { label: '転換率', key: 'cvr', fmt: v => v.toFixed(2) + '%' },
-    { label: 'RPP転換率', key: 'rppCvr', fmt: v => v.toFixed(2) + '%' },
+    { label: 'RPP広告転換率', key: 'rppCvr', fmt: v => v.toFixed(2) + '%', rpp: true },
+    { label: 'RPP広告以外転換率', key: 'nonRppCvr', fmt: v => v.toFixed(2) + '%', rpp: true },
     { label: '客単価', key: 'unitPrice', fmt: v => yen(v) },
-    { label: 'RPP客単価', key: 'rppUnitPrice', fmt: v => yen(v) },
-    { label: 'CPC', key: 'rppCpc', fmt: v => yen(v) },
-    { label: 'ROAS', key: 'rppRoas', fmt: v => v.toFixed(1) + '%' },
-    { label: 'TACOS', key: 'tacos', fmt: v => v.toFixed(1) + '%' },
+    { label: 'RPP広告客単価', key: 'rppUnitPrice', fmt: v => yen(v), rpp: true },
+    { label: 'RPP広告以外客単価', key: 'nonRppUnitPrice', fmt: v => yen(v), rpp: true },
+    { label: 'CPC', key: 'rppCpc', fmt: v => yen(v), rpp: true },
+    { label: 'ROAS', key: 'rppRoas', fmt: v => v.toFixed(1) + '%', rpp: true },
+    { label: 'TACOS', key: 'tacos', fmt: v => v.toFixed(1) + '%', rpp: true },
   ];
 
   let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
@@ -4565,7 +4586,7 @@ function renderProductMonthly() {
   html += '</tr></thead><tbody>';
 
   metricDefs.forEach(def => {
-    const isRpp = def.label.includes('RPP') || def.key === 'rppCpc' || def.key === 'rppRoas' || def.key === 'tacos';
+    const isRpp = !!def.rpp;
     html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
     monthMetrics.forEach(m => {
       html += '<td style="text-align:right">' + def.fmt(m[def.key]) + '</td>';
