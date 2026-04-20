@@ -3767,6 +3767,8 @@ async function generateDashboardHtml() {
     mailData,
     allItemByMonth,
     hasOrders: orders.length > 0,
+    // Compact order data for client-side filtering (email, item, date, orderNum)
+    orderItems: orders.map(r => ({ e: r.email, i: r.manageNum || r.itemName, d: r.date, n: r.orderNum, p: r.price })),
     repeatAnalysis: {
       totalCustomers,
       firstTimers,
@@ -4062,6 +4064,16 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="section-title">新規/リピート購入比率</div>
     <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
   </div>
+  <div class="section-box">
+    <div class="section-title">商品別実績</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <span class="filter-label">商品管理番号</span>
+      <select id="productItemSelect" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+        <option value="">選択してください</option>
+      </select>
+    </div>
+    <div id="productMonthlyWrap" style="overflow-x:auto"></div>
+  </div>
 </div>
 
 <!-- Tab 2: 広告分析 -->
@@ -4135,6 +4147,12 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <!-- Tab 4: リピート -->
 <div class="tab-panel" id="tab-repeat">
   <div class="panel-title">リピート分析</div>
+  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+    <span class="filter-label">商品フィルタ</span>
+    <select id="repeatProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+      <option value="">全商品</option>
+    </select>
+  </div>
   <div id="repeatCards" class="cards-grid"></div>
   <div class="grid-2">
     <div class="section-box">
@@ -4186,6 +4204,12 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <!-- Tab 6: LTV分析 -->
 <div class="tab-panel" id="tab-ltv">
   <div class="panel-title">LTV分析（初回購入商品別）</div>
+  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+    <span class="filter-label">商品フィルタ</span>
+    <select id="ltvProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+      <option value="">全商品</option>
+    </select>
+  </div>
   <div class="section-box">
     <div class="section-title">初回購入商品別 LTV・F2転換</div>
     <div id="ltvFirstItemTable"></div>
@@ -4438,6 +4462,109 @@ function renderSalesTab() {
       }
     });
   }
+
+  // Product selector population
+  const pSel = document.getElementById('productItemSelect');
+  if (pSel.options.length <= 1) {
+    const allProducts = new Set();
+    D.months.forEach(ym => {
+      (D.allItemByMonth[ym] || []).forEach(r => { if (r.manageNum) allProducts.add(r.manageNum); });
+      (D.rppItemByMonth[ym] || []).forEach(r => { if (r.name) allProducts.add(r.name); });
+    });
+    [...allProducts].sort().forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      pSel.appendChild(opt);
+    });
+  }
+  renderProductMonthly();
+}
+
+function renderProductMonthly() {
+  const wrap = document.getElementById('productMonthlyWrap');
+  const sel = document.getElementById('productItemSelect');
+  const selected = sel ? sel.value : '';
+  if (!selected) {
+    wrap.innerHTML = '<div class="no-data">商品を選択してください</div>';
+    return;
+  }
+
+  // Collect monthly data for selected product
+  const months = D.months.slice().reverse(); // chronological
+  const rows = [];
+
+  // Build per-month metrics
+  const monthMetrics = months.map(ym => {
+    // all_item_raw data
+    const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+    const sales = items.reduce((s, r) => s + r.sales, 0);
+    const access = items.reduce((s, r) => s + r.access, 0);
+    const orders = items.reduce((s, r) => s + r.orders, 0);
+    const cvr = access > 0 ? (orders / access * 100) : 0;
+    const unitPrice = orders > 0 ? Math.round(sales / orders) : 0;
+
+    // RPP item data
+    const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.name === selected);
+    const rppSpend = rppItems.reduce((s, r) => s + r.spend, 0);
+    const rppSales = rppItems.reduce((s, r) => s + r.sales, 0);
+    const rppClicks = rppItems.reduce((s, r) => s + r.clicks, 0);
+    const rppOrders = rppItems.reduce((s, r) => s + r.orders, 0);
+    const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
+    const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
+    const rppCpc = rppClicks > 0 ? Math.round(rppSpend / rppClicks) : 0;
+    const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
+    const rppSalesRatio = sales > 0 ? (rppSales / sales * 100) : 0;
+    const rppAccessRatio = access > 0 ? (rppClicks / access * 100) : 0;
+    const tacos = sales > 0 ? (rppSpend / sales * 100) : 0;
+
+    return { sales, access, orders, cvr, unitPrice, rppSpend, rppSales, rppClicks, rppOrders, rppCvr, rppUnitPrice, rppCpc, rppRoas, rppSalesRatio, rppAccessRatio, tacos };
+  });
+
+  // MoM change helper
+  const momChange = (cur, prev) => {
+    if (!prev || prev === 0) return '-';
+    const ch = ((cur - prev) / Math.abs(prev) * 100);
+    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+    return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
+  };
+
+  const metricDefs = [
+    { label: '売上', key: 'sales', fmt: v => yen(v) },
+    { label: 'RPP広告売上', key: 'rppSales', fmt: v => yen(v) },
+    { label: 'RPP売上比率', key: 'rppSalesRatio', fmt: v => v.toFixed(1) + '%' },
+    { label: 'アクセス数', key: 'access', fmt: v => comma(v) },
+    { label: 'RPPクリック', key: 'rppClicks', fmt: v => comma(v) },
+    { label: 'RPPアクセス比率', key: 'rppAccessRatio', fmt: v => v.toFixed(1) + '%' },
+    { label: '転換率', key: 'cvr', fmt: v => v.toFixed(2) + '%' },
+    { label: 'RPP転換率', key: 'rppCvr', fmt: v => v.toFixed(2) + '%' },
+    { label: '客単価', key: 'unitPrice', fmt: v => yen(v) },
+    { label: 'RPP客単価', key: 'rppUnitPrice', fmt: v => yen(v) },
+    { label: 'CPC', key: 'rppCpc', fmt: v => yen(v) },
+    { label: 'ROAS', key: 'rppRoas', fmt: v => v.toFixed(1) + '%' },
+    { label: 'TACOS', key: 'tacos', fmt: v => v.toFixed(1) + '%' },
+  ];
+
+  let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
+  months.forEach(ym => { html += '<th>' + (D.monthLabels[ym] || ym) + '</th>'; });
+  if (months.length >= 2) html += '<th>前月比</th>';
+  html += '</tr></thead><tbody>';
+
+  metricDefs.forEach(def => {
+    const isRpp = def.label.includes('RPP') || def.key === 'rppCpc' || def.key === 'rppRoas' || def.key === 'tacos';
+    html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
+    monthMetrics.forEach(m => {
+      html += '<td style="text-align:right">' + def.fmt(m[def.key]) + '</td>';
+    });
+    if (months.length >= 2) {
+      const last = monthMetrics[monthMetrics.length - 1][def.key];
+      const prev = monthMetrics[monthMetrics.length - 2][def.key];
+      html += '<td style="text-align:right">' + momChange(last, prev) + '</td>';
+    }
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
 }
 
 function renderAdsTab() {
@@ -4490,18 +4617,32 @@ function renderAdsTab() {
     (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
   ).join('');
 
-  // RPP KPIs
+  // RPP KPIs - 全体/商品別(全体−KW)/KW別 の3分解
+  const rppKwSpendTotal = sumField(rppKwData, 'spend');
+  const rppKwSalesTotal = sumField(rppKwData, 'sales');
+  const rppKwClicksTotal = sumField(rppKwData, 'clicks');
+  const rppKwOrdersTotal = sumField(rppKwData, 'orders');
+  const rppItemOnlySpend = rppSpend - rppKwSpendTotal;
+  const rppItemOnlySales = rppSales - rppKwSalesTotal;
+  const rppItemOnlyClicks = rppClicks - rppKwClicksTotal;
+  const rppItemOnlyOrders = rppOrders - rppKwOrdersTotal;
+
   const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
   const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
   const rppCpc = rppClicks > 0 ? rppSpend / rppClicks : 0;
-  document.getElementById('rppKpiRow').innerHTML = [
-    { label: '費用', value: yen(rppSpend) },
-    { label: '売上', value: yen(rppSales) },
-    { label: 'クリック', value: comma(rppClicks) },
-    { label: '平均CPC', value: yen(Math.round(rppCpc)) },
-    { label: 'CVR', value: pct(rppCvr) },
-    { label: 'ROAS', value: rppRoas.toFixed(0) + '%' },
-  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  const makeRow = (label, spend, sales, clicks, orders) => {
+    const roas = spend > 0 ? (sales / spend * 100).toFixed(0) : 0;
+    const cvr = clicks > 0 ? (orders / clicks * 100).toFixed(2) : '0.00';
+    const cpc = clicks > 0 ? Math.round(spend / clicks) : 0;
+    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
+  };
+  document.getElementById('rppKpiRow').innerHTML =
+    '<div class="table-wrap"><table><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
+    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders) +
+    makeRow('商品別(全体−KW)', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders) +
+    makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal) +
+    '</tbody></table></div>';
 
   // RPP daily chart
   destroyChart('chartRppDaily');
@@ -4796,18 +4937,70 @@ function renderRepeatTab() {
     document.getElementById('repeatCards').innerHTML = '<div class="no-data">受注データなし（order_rawの読み取りに失敗した可能性があります）</div>';
     return;
   }
-  const ra = D.repeatAnalysis;
+
+  // Product filter
+  const rpSel = document.getElementById('repeatProductFilter');
+  if (rpSel.options.length <= 1 && D.orderItems) {
+    const items = new Set();
+    D.orderItems.forEach(r => { if (r.i) items.add(r.i); });
+    [...items].sort().forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      rpSel.appendChild(opt);
+    });
+  }
+  const filterItem = rpSel ? rpSel.value : '';
+
+  // Filter orders by product if selected
+  const oi = D.orderItems || [];
+  const filtered = filterItem ? oi.filter(r => r.i === filterItem) : oi;
+
+  // Compute repeat analysis from filtered data
+  const custOrders = {};
+  filtered.forEach(r => {
+    if (!r.e) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+  const custFirst = {};
+  Object.entries(custOrders).forEach(([email, ords]) => {
+    const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
+    custFirst[email] = sorted[0]?.d || '';
+  });
+  const custCounts = {};
+  Object.entries(custOrders).forEach(([email, ords]) => {
+    const uniqueNums = [...new Set(ords.map(o => o.n).filter(Boolean))];
+    custCounts[email] = uniqueNums.length || 1;
+  });
+
+  const totalCust = Object.keys(custCounts).length;
+  const firstTimersCnt = Object.values(custCounts).filter(c => c === 1).length;
+  const repeatersCnt = totalCust - firstTimersCnt;
+  const f2RateVal = totalCust > 0 ? (repeatersCnt / totalCust * 100) : 0;
+
   document.getElementById('repeatCards').innerHTML = [
-    { label: '総顧客数', value: comma(ra.totalCustomers) },
-    { label: '新規客', value: comma(ra.firstTimers) },
-    { label: 'リピーター', value: comma(ra.repeaters) },
-    { label: 'F2転換率', value: pct(ra.f2Rate) },
-    { label: 'リピート率', value: ra.totalCustomers > 0 ? pct(ra.repeaters / ra.totalCustomers * 100) : '0%' },
+    { label: '総顧客数', value: comma(totalCust) },
+    { label: '新規客', value: comma(firstTimersCnt) },
+    { label: 'リピーター', value: comma(repeatersCnt) },
+    { label: 'F2転換率', value: pct(f2RateVal) },
+    { label: 'リピート率', value: totalCust > 0 ? pct(repeatersCnt / totalCust * 100) : '0%' },
   ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
 
-  // Monthly NR chart
+  // Monthly NR
+  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m = s.match(/^(\\d{4})-(\\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') : ''; };
+  const monthlyNR = {};
+  filtered.forEach(r => {
+    if (!r.e || !r.d) return;
+    const ym = toYmClient(r.d);
+    if (!ym) return;
+    if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
+    const firstYM = toYmClient(custFirst[r.e]);
+    if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
+    else monthlyNR[ym].repC.add(r.e);
+  });
+  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newC.size, repeatCust: v.repC.size })).sort((a, b) => a.month.localeCompare(b.month));
+
   destroyChart('chartMonthlyNR');
-  const nr = ra.monthlyNR;
   if (nr.length > 0) {
     chartInstances['chartMonthlyNR'] = new Chart(document.getElementById('chartMonthlyNR'), {
       type: 'bar',
@@ -4826,14 +5019,23 @@ function renderRepeatTab() {
     });
   }
 
-  // Purchase distribution chart
+  // Purchase distribution
+  const purchaseDist = {};
+  Object.values(custCounts).forEach(cnt => {
+    const bucket = cnt >= 10 ? '10+' : String(cnt);
+    purchaseDist[bucket] = (purchaseDist[bucket] || 0) + 1;
+  });
+  const purchaseDistRows = Object.entries(purchaseDist)
+    .sort((a, b) => (a[0] === '10+' ? 999 : Number(a[0])) - (b[0] === '10+' ? 999 : Number(b[0])))
+    .map(([cnt, customers]) => ({ cnt, customers }));
+
   destroyChart('chartPurchaseDist');
-  if (ra.purchaseDistRows.length > 0) {
+  if (purchaseDistRows.length > 0) {
     chartInstances['chartPurchaseDist'] = new Chart(document.getElementById('chartPurchaseDist'), {
       type: 'bar',
       data: {
-        labels: ra.purchaseDistRows.map(r => r.cnt + '回'),
-        datasets: [{ label: '顧客数', data: ra.purchaseDistRows.map(r => r.customers), backgroundColor: '#1a73e8' }]
+        labels: purchaseDistRows.map(r => r.cnt + '回'),
+        datasets: [{ label: '顧客数', data: purchaseDistRows.map(r => r.customers), backgroundColor: '#1a73e8' }]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
@@ -4843,23 +5045,42 @@ function renderRepeatTab() {
     });
   }
 
-  // Repeat item ranking
-  buildTable('repeatItemTableWrap', [
-    { key: 'item', label: '商品', fmt: v => safe(String(v).substring(0, 40)) },
-    { key: 'totalBuyers', label: '購入者数', fmt: v => comma(v) },
-    { key: 'repeatBuyers', label: 'リピーター数', fmt: v => comma(v) },
-    { key: 'repeatRate', label: 'リピート率', fmt: v => pct1(v) },
-    { key: 'totalPurchases', label: '総購入回数', fmt: v => comma(v) },
-  ], ra.repeatItemRows || [], { limit: 30 });
+  // Repeat item ranking (use precomputed for all, recompute for filtered)
+  if (!filterItem) {
+    buildTable('repeatItemTableWrap', [
+      { key: 'item', label: '商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'totalBuyers', label: '購入者数', fmt: v => comma(v) },
+      { key: 'repeatBuyers', label: 'リピーター数', fmt: v => comma(v) },
+      { key: 'repeatRate', label: 'リピート率', fmt: v => pct1(v) },
+      { key: 'totalPurchases', label: '総購入回数', fmt: v => comma(v) },
+    ], D.repeatAnalysis.repeatItemRows || [], { limit: 30 });
 
-  // Entry item F2 conversion
-  buildTable('entryItemF2TableWrap', [
-    { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 40)) },
-    { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
-    { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
-    { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + pct1(v) + '</span>' },
-    { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
-  ], ra.entryItemF2Rows || [], { limit: 30 });
+    buildTable('entryItemF2TableWrap', [
+      { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
+      { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
+      { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + pct1(v) + '</span>' },
+      { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+    ], D.repeatAnalysis.entryItemF2Rows || [], { limit: 30 });
+  } else {
+    // For filtered product: show which other products this product's buyers also buy
+    const buyerEmails = Object.keys(custOrders);
+    const otherItems = {};
+    D.orderItems.forEach(r => {
+      if (!buyerEmails.includes(r.e) || r.i === filterItem || !r.i) return;
+      if (!otherItems[r.i]) otherItems[r.i] = { item: r.i, count: 0, buyers: new Set() };
+      otherItems[r.i].count++;
+      otherItems[r.i].buyers.add(r.e);
+    });
+    const otherRows = Object.values(otherItems).map(r => ({ item: r.item, buyers: r.buyers.size, count: r.count })).sort((a, b) => b.buyers - a.buyers).slice(0, 30);
+    buildTable('repeatItemTableWrap', [
+      { key: 'item', label: '同一顧客が購入した他商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'buyers', label: '重複顧客数', fmt: v => comma(v) },
+      { key: 'count', label: '購入回数', fmt: v => comma(v) },
+    ], otherRows, { limit: 30 });
+
+    document.getElementById('entryItemF2TableWrap').innerHTML = '';
+  }
 }
 
 function renderBasketTab() {
@@ -4918,18 +5139,105 @@ function renderLTVTab() {
     });
     return;
   }
-  const ltv = D.ltvAnalysis;
+
+  // Product filter
+  const ltvSel = document.getElementById('ltvProductFilter');
+  if (ltvSel.options.length <= 1 && D.orderItems) {
+    const items = new Set();
+    D.orderItems.forEach(r => { if (r.i) items.add(r.i); });
+    [...items].sort().forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      ltvSel.appendChild(opt);
+    });
+  }
+  const filterItem = ltvSel ? ltvSel.value : '';
+
+  const oi = D.orderItems || [];
+  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m = s.match(/^(\\d{4})-(\\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') : ''; };
+
+  // If filtered, recompute LTV data for customers who bought that product
+  let cohortData, countPriceData, firstItemData;
+
+  if (filterItem) {
+    // Find customers who bought this item
+    const targetBuyers = new Set();
+    oi.forEach(r => { if (r.i === filterItem && r.e) targetBuyers.add(r.e); });
+
+    // Build per-customer data from ALL their orders
+    const custOrd = {};
+    oi.forEach(r => {
+      if (!targetBuyers.has(r.e)) return;
+      if (!custOrd[r.e]) custOrd[r.e] = [];
+      custOrd[r.e].push(r);
+    });
+
+    // Cohort
+    const cohorts = {};
+    Object.entries(custOrd).forEach(([email, ords]) => {
+      const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      const firstYM = toYmClient(sorted[0]?.d);
+      if (!firstYM) return;
+      const totalSpend = sorted.reduce((s, o) => s + (o.p || 0), 0);
+      const uniqueOrders = [...new Set(sorted.map(o => o.n).filter(Boolean))].length || 1;
+      if (!cohorts[firstYM]) cohorts[firstYM] = { total: 0, count: 0, repeat: 0 };
+      cohorts[firstYM].total += totalSpend;
+      cohorts[firstYM].count++;
+      if (uniqueOrders >= 2) cohorts[firstYM].repeat++;
+    });
+    cohortData = Object.entries(cohorts).map(([m, v]) => ({
+      month: m, customers: v.count,
+      avgLTV: v.count > 0 ? Math.round(v.total / v.count) : 0,
+      f2Rate: v.count > 0 ? Math.round(v.repeat / v.count * 1000) / 10 : 0,
+    })).sort((a, b) => a.month.localeCompare(b.month));
+
+    // Purchase count price
+    const cntPrice = {};
+    Object.entries(custOrd).forEach(([email, ords]) => {
+      const uniqueOrders = [...new Set(ords.map(o => o.n).filter(Boolean))].length || 1;
+      const bucket = uniqueOrders >= 10 ? '10+' : String(uniqueOrders);
+      const totalSpend = ords.reduce((s, o) => s + (o.p || 0), 0);
+      if (!cntPrice[bucket]) cntPrice[bucket] = { total: 0, count: 0 };
+      cntPrice[bucket].total += totalSpend;
+      cntPrice[bucket].count++;
+    });
+    countPriceData = Object.entries(cntPrice)
+      .sort((a, b) => (a[0] === '10+' ? 999 : Number(a[0])) - (b[0] === '10+' ? 999 : Number(b[0])))
+      .map(([cnt, v]) => ({ cnt, avgPrice: v.count > 0 ? Math.round(v.total / v.count) : 0, customers: v.count }));
+
+    // First item LTV (for this item's buyers, what was their first item)
+    const firstItem = {};
+    Object.entries(custOrd).forEach(([email, ords]) => {
+      const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      const fi = sorted[0]?.i || '不明';
+      const totalSpend = sorted.reduce((s, o) => s + (o.p || 0), 0);
+      const uniqueOrders = [...new Set(sorted.map(o => o.n).filter(Boolean))].length || 1;
+      if (!firstItem[fi]) firstItem[fi] = { item: fi, totalLTV: 0, count: 0, repeatCount: 0 };
+      firstItem[fi].totalLTV += totalSpend;
+      firstItem[fi].count++;
+      if (uniqueOrders >= 2) firstItem[fi].repeatCount++;
+    });
+    firstItemData = Object.values(firstItem).map(r => ({
+      item: r.item, count: r.count,
+      avgLTV: r.count > 0 ? Math.round(r.totalLTV / r.count) : 0,
+      f2Rate: r.count > 0 ? Math.round(r.repeatCount / r.count * 1000) / 10 : 0,
+    })).sort((a, b) => b.avgLTV - a.avgLTV).slice(0, 30);
+  } else {
+    cohortData = D.ltvAnalysis.cohortLTV;
+    countPriceData = D.ltvAnalysis.purchaseCountPrice;
+    firstItemData = D.ltvAnalysis.firstItemLTV;
+  }
 
   // Cohort LTV chart
   destroyChart('chartCohortLTV');
-  if (ltv.cohortLTV.length > 0) {
+  if (cohortData.length > 0) {
     chartInstances['chartCohortLTV'] = new Chart(document.getElementById('chartCohortLTV'), {
       type: 'bar',
       data: {
-        labels: ltv.cohortLTV.map(r => D.monthLabels[r.month] || r.month),
+        labels: cohortData.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: '平均LTV', data: ltv.cohortLTV.map(r => r.avgLTV), backgroundColor: 'rgba(26,58,92,0.7)', yAxisID: 'y' },
-          { label: '顧客数', data: ltv.cohortLTV.map(r => r.customers), type: 'line', borderColor: '#1a73e8', yAxisID: 'y1', tension: 0.3, pointRadius: 2 },
+          { label: '平均LTV', data: cohortData.map(r => r.avgLTV), backgroundColor: 'rgba(26,58,92,0.7)', yAxisID: 'y' },
+          { label: '顧客数', data: cohortData.map(r => r.customers), type: 'line', borderColor: '#1a73e8', yAxisID: 'y1', tension: 0.3, pointRadius: 2 },
         ]
       },
       options: {
@@ -4945,13 +5253,13 @@ function renderLTVTab() {
 
   // Cohort F2 chart
   destroyChart('chartCohortF2');
-  if (ltv.cohortLTV.length > 0) {
+  if (cohortData.length > 0) {
     chartInstances['chartCohortF2'] = new Chart(document.getElementById('chartCohortF2'), {
       type: 'line',
       data: {
-        labels: ltv.cohortLTV.map(r => D.monthLabels[r.month] || r.month),
+        labels: cohortData.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: 'F2転換率(%)', data: ltv.cohortLTV.map(r => r.f2Rate), borderColor: '#e8710a', backgroundColor: 'rgba(232,113,10,0.1)', fill: true, tension: 0.3 },
+          { label: 'F2転換率(%)', data: cohortData.map(r => r.f2Rate), borderColor: '#e8710a', backgroundColor: 'rgba(232,113,10,0.1)', fill: true, tension: 0.3 },
         ]
       },
       options: {
@@ -4967,7 +5275,7 @@ function renderLTVTab() {
     { key: 'cnt', label: '購入回数', fmt: v => v + '回' },
     { key: 'customers', label: '顧客数', fmt: v => comma(v) },
     { key: 'avgPrice', label: '平均累計額', fmt: v => yen(v) },
-  ], ltv.purchaseCountPrice);
+  ], countPriceData);
 
   // First item LTV table
   buildTable('ltvFirstItemTable', [
@@ -4975,7 +5283,7 @@ function renderLTVTab() {
     { key: 'count', label: '顧客数', fmt: v => comma(v) },
     { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
     { key: 'f2Rate', label: 'F2率', fmt: v => pct1(v) },
-  ], ltv.firstItemLTV, { limit: 30 });
+  ], firstItemData, { limit: 30 });
 }
 
 function renderCoProducts() {
@@ -5098,6 +5406,15 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
     renderAll();
   });
 });
+
+// Product item selector
+document.getElementById('productItemSelect').addEventListener('change', renderProductMonthly);
+
+// Repeat product filter
+document.getElementById('repeatProductFilter').addEventListener('change', renderRepeatTab);
+
+// LTV product filter
+document.getElementById('ltvProductFilter').addEventListener('change', renderLTVTab);
 
 // Basket product selector
 document.getElementById('basketProductSelect').addEventListener('change', renderCoProducts);
