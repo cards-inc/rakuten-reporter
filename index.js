@@ -3897,7 +3897,7 @@ body {
 .tab-panel.active { display: block; }
 .panel-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--c-text); }
 .cards-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  display: grid; grid-template-columns: repeat(5, 1fr);
   gap: 14px; margin-bottom: 20px;
 }
 .metric-card {
@@ -3989,7 +3989,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 @media (max-width: 768px) {
   .main-content { padding: 12px; }
   .section-box { padding: 14px 16px; }
-  .cards-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .cards-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .metric-value { font-size: 20px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .chart-md { height: 240px; }
@@ -4056,20 +4056,22 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
-  <div class="section-box">
-    <div class="section-title">日次推移</div>
-    <div class="chart-wrap chart-md"><canvas id="chartSalesDaily"></canvas></div>
-  </div>
-  <div class="section-box" style="max-width:400px">
-    <div class="section-title">新規/リピート購入比率</div>
-    <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
+  <div class="grid-2" style="grid-template-columns:2fr 1fr">
+    <div class="section-box">
+      <div class="section-title">日次推移</div>
+      <div class="chart-wrap chart-md"><canvas id="chartSalesDaily"></canvas></div>
+    </div>
+    <div class="section-box">
+      <div class="section-title">新規/リピート購入比率</div>
+      <div class="chart-wrap chart-md"><canvas id="chartNewRepeatPie"></canvas></div>
+    </div>
   </div>
   <div class="section-box">
     <div class="section-title">商品別実績</div>
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <span class="filter-label">商品管理番号</span>
-      <select id="productItemSelect" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
-        <option value="">選択してください</option>
+      <span class="filter-label">商品</span>
+      <select id="productItemSelect" class="filter-select" style="width:auto;min-width:300px;max-width:500px">
+        <option value="">商品を選択してください</option>
       </select>
     </div>
     <div id="productMonthlyWrap" style="overflow-x:auto"></div>
@@ -4463,17 +4465,30 @@ function renderSalesTab() {
     });
   }
 
-  // Product selector population
+  // Product selector population - build name↔manageNum map
   const pSel = document.getElementById('productItemSelect');
   if (pSel.options.length <= 1) {
-    const allProducts = new Set();
+    const productMap = {}; // manageNum -> name
     D.months.forEach(ym => {
-      (D.allItemByMonth[ym] || []).forEach(r => { if (r.manageNum) allProducts.add(r.manageNum); });
-      (D.rppItemByMonth[ym] || []).forEach(r => { if (r.name) allProducts.add(r.name); });
+      (D.allItemByMonth[ym] || []).forEach(r => {
+        const key = r.manageNum || r.name;
+        if (key && !productMap[key]) productMap[key] = r.name || r.manageNum || key;
+        if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
+      });
+      (D.rppItemByMonth[ym] || []).forEach(r => {
+        if (r.name && !productMap[r.name]) productMap[r.name] = r.name;
+      });
     });
-    [...allProducts].sort().forEach(p => {
+    // Also from orderItems
+    if (D.orderItems) {
+      D.orderItems.forEach(r => {
+        if (r.i && !productMap[r.i]) productMap[r.i] = r.i;
+      });
+    }
+    Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
       const opt = document.createElement('option');
-      opt.value = p; opt.textContent = p;
+      opt.value = key;
+      opt.textContent = name !== key ? name + ' (' + key + ')' : name;
       pSel.appendChild(opt);
     });
   }
