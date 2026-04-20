@@ -28,15 +28,36 @@ function getDashboardData() {
 }
 
 function readSheet(ss, name) {
-  const sheet = ss.getSheetByName(name);
-  if (!sheet || sheet.getLastRow() < 2) return [];
-  const data = sheet.getDataRange().getValues();
-  const headers = data[0];
-  return data.slice(1).map(row => {
-    const obj = {};
-    headers.forEach((h, i) => obj[h] = row[i]);
-    return obj;
-  });
+  try {
+    const sheet = ss.getSheetByName(name);
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    return data.slice(1).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = row[i]);
+      return obj;
+    });
+  } catch (e) {
+    // DATASOURCEシート（BigQuery接続）はSheets APIで読む
+    if (e.message && e.message.includes('DATASOURCE')) {
+      try {
+        const resp = Sheets.Spreadsheets.Values.get(ss.getId(), name);
+        if (!resp.values || resp.values.length < 2) return [];
+        const headers = resp.values[0];
+        return resp.values.slice(1).map(row => {
+          const obj = {};
+          headers.forEach((h, i) => obj[h] = row[i] || '');
+          return obj;
+        });
+      } catch (e2) {
+        console.log('Sheets API fallback failed for ' + name + ': ' + e2.message);
+        return [];
+      }
+    }
+    console.log('readSheet error for ' + name + ': ' + e.message);
+    return [];
+  }
 }
 
 function parseDate(val) {

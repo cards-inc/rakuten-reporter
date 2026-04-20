@@ -6,6 +6,11 @@
         "userSymbol": "BigQuery",
         "version": "v2",
         "serviceId": "bigquery"
+      },
+      {
+        "userSymbol": "Sheets",
+        "version": "v4",
+        "serviceId": "sheets"
       }
     ]
   },
