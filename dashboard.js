@@ -13,9 +13,9 @@ function doGet() {
 function getDashboardData() {
   const ss = SpreadsheetApp.openById(SS_ID);
 
-  const orders = readSheet(ss, 'order_raw');
+  const orders = readSheet(ss, '受注_raw');
   const rppAll = readSheet(ss, 'rpp_all_raw');
-  const rppItems = readSheet(ss, 'rpp_item_raw');
+  const rppItems = readSheet(ss, 'rpp_商品_raw');
 
   return {
     monthlySales: calcMonthlySales(orders),

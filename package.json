@@ -8,11 +8,11 @@
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.0.0",
-    "puppeteer-core": "^22.0.0",
     "@sparticuz/chromium": "^123.0.0",
-    "googleapis": "^134.0.0",
-    "csv-parse": "^5.5.0",
     "adm-zip": "^0.5.10",
-    "iconv-lite": "^0.6.3"
+    "csv-parse": "^5.5.0",
+    "googleapis": "^134.0.0",
+    "iconv-lite": "^0.6.3",
+    "puppeteer-core": "^22.0.0"
   }
 }

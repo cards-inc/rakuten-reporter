@@ -1,4 +1,5 @@
 **/**
 !dashboard.gs
+!bigquery-sync.gs
 !index.html
 !appsscript.json
