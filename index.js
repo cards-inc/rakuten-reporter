@@ -4096,14 +4096,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
-  <div class="section-box">
-    <div class="section-title">売上分解ツリー</div>
-    <div id="salesTreeWrap" style="overflow-x:auto"></div>
-  </div>
-  <div class="section-box">
-    <div class="section-title">日別売上（RPP経由 / 広告外）</div>
-    <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
-  </div>
   <div class="grid-2" style="grid-template-columns:2fr 1fr">
     <div class="section-box">
       <div class="section-title">日次推移</div>
@@ -4113,6 +4105,14 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="section-title">新規/リピート購入比率</div>
       <div class="chart-wrap chart-md"><canvas id="chartNewRepeatPie"></canvas></div>
     </div>
+  </div>
+  <div class="section-box">
+    <div class="section-title">売上分解ツリー</div>
+    <div id="salesTreeWrap" style="overflow-x:auto"></div>
+  </div>
+  <div class="section-box">
+    <div class="section-title">日別売上（RPP経由 / 広告外）</div>
+    <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
   </div>
   <div class="section-box">
     <div class="section-title">商品別実績</div>
@@ -4366,14 +4366,16 @@ function changeHtml(changeVal) {
 }
 
 // ── Data getters ──
-function getMonthData(dataByMonth, ym) {
-  // 日次（期間）モード: dayFrom~dayToの範囲でフィルタ
-  if (periodType === 'day' && dayFrom && dayTo) {
+// shiftedRange: if provided, use this {from, to} instead of dayFrom/dayTo
+function getMonthData(dataByMonth, ym, shiftedRange) {
+  if (periodType === 'day' && (shiftedRange || (dayFrom && dayTo))) {
+    const from = shiftedRange ? shiftedRange.from : dayFrom;
+    const to = shiftedRange ? shiftedRange.to : dayTo;
     const all = [];
     Object.values(dataByMonth).forEach(arr => all.push(...arr));
     return all.filter(r => {
       const d = (r.date || '').replace(/\\//g, '-');
-      return d >= dayFrom && d <= dayTo;
+      return d >= from && d <= to;
     });
   }
   if (ym === 'all') {
@@ -4382,6 +4384,19 @@ function getMonthData(dataByMonth, ym) {
     return all;
   }
   return dataByMonth[ym] || [];
+}
+
+// Get shifted date range for comparison (mom = prev month, yoy = prev year)
+function getCompareRange(mode) {
+  if (!dayFrom || !dayTo) return null;
+  function shiftDate(dateStr, months) {
+    const d = new Date(dateStr + 'T00:00:00');
+    d.setMonth(d.getMonth() + months);
+    return d.toISOString().substring(0, 10);
+  }
+  if (mode === 'mom') return { from: shiftDate(dayFrom, -1), to: shiftDate(dayTo, -1) };
+  if (mode === 'yoy') return { from: shiftDate(dayFrom, -12), to: shiftDate(dayTo, -12) };
+  return null;
 }
 
 function sumField(arr, field) {
@@ -4446,7 +4461,8 @@ function buildTable(containerId, columns, rows, opts = {}) {
 function renderSalesTab() {
   const data = getMonthData(D.allByMonth, currentMonth);
   const cmpYm = getCompareMonth(currentMonth, compareMode);
-  const cmpData = cmpYm ? getMonthData(D.allByMonth, cmpYm) : [];
+  const cmpRange = getCompareRange(compareMode);
+  const cmpData = cmpRange ? getMonthData(D.allByMonth, cmpYm, cmpRange) : (cmpYm ? getMonthData(D.allByMonth, cmpYm) : []);
 
   const totalSales = sumField(data, 'sales');
   const totalOrders = sumField(data, 'orders');
@@ -4543,10 +4559,12 @@ function renderSalesTab() {
   // 前月・前年比
   const prevMonthYm = getCompareMonth(currentMonth, 'mom');
   const prevYearYm = getCompareMonth(currentMonth, 'yoy');
-  function getTreeCompare(ym) {
+  const prevMonthRange = getCompareRange('mom');
+  const prevYearRange = getCompareRange('yoy');
+  function getTreeCompare(ym, range) {
     if (!ym) return null;
-    const d = getMonthData(D.allByMonth, ym);
-    const r = getMonthData(D.rppByMonth, ym);
+    const d = getMonthData(D.allByMonth, ym, range);
+    const r = getMonthData(D.rppByMonth, ym, range);
     const s = sumField(d, 'sales'), o = sumField(d, 'orders'), a = sumField(d, 'access');
     const rs = sumField(r, 'sales'), rc = sumField(r, 'clicks'), ro = sumField(r, 'orders');
     return {
@@ -4556,8 +4574,8 @@ function renderSalesTab() {
       access: a, cvr: a > 0 ? (o/a*100) : 0, unitPrice: o > 0 ? Math.round(s/o) : 0,
     };
   }
-  const prevM = getTreeCompare(prevMonthYm);
-  const prevY = getTreeCompare(prevYearYm);
+  const prevM = getTreeCompare(prevMonthYm, prevMonthRange);
+  const prevY = getTreeCompare(prevYearYm, prevYearRange);
 
   function treeRatio(cur, prev) {
     if (!prev || prev === 0) return '-';
@@ -4877,11 +4895,12 @@ function renderAdsTab() {
 
   // Compare
   let cTotalSpend = null, cTotalSales = null;
+  const adCmpRange = getCompareRange(compareMode);
   if (cmpYm) {
-    const cr = getMonthData(D.rppByMonth, cmpYm);
-    const ct = getMonthData(D.tdaByMonth, cmpYm);
-    const ca = getMonthData(D.adByMonth, cmpYm);
-    const cc = getMonthData(D.cpaByMonth || {}, cmpYm);
+    const cr = getMonthData(D.rppByMonth, cmpYm, adCmpRange);
+    const ct = getMonthData(D.tdaByMonth, cmpYm, adCmpRange);
+    const ca = getMonthData(D.adByMonth, cmpYm, adCmpRange);
+    const cc = getMonthData(D.cpaByMonth || {}, cmpYm, adCmpRange);
     cTotalSpend = sumField(cr,'spend') + sumField(ct,'spend') + sumField(ca,'spend') + sumField(cc,'spend');
     cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales') + sumField(cc,'sales');
   }
