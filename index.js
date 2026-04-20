@@ -3202,13 +3202,14 @@ async function generateDashboardHtml() {
     }
   };
 
-  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw] = await Promise.all([
+  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, cpaRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw] = await Promise.all([
     readSheet('all_raw'),
     readSheet('rpp_all_raw'),
     readSheet('rpp_item_raw'),
     readSheet('rpp_kw_raw'),
     readSheet('tda_raw'),
     readSheet('ad_raw'),
+    readSheet('cpa_raw'),
     readSheet('mail_raw'),
     readSheet('line_raw'),
     readSheet('afi_raw'),
@@ -3237,6 +3238,10 @@ async function generateDashboardHtml() {
   const toYM = (d) => {
     const dt = parseDate(d);
     return dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : '';
+  };
+  const toDateStr = (d) => {
+    const dt = parseDate(d);
+    return dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}` : '';
   };
   const ymToLabel = (ym) => {
     if (!ym) return '';
@@ -3362,6 +3367,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!rppItemByMonth[ym]) rppItemByMonth[ym] = [];
     rppItemByMonth[ym].push({
+      date: toDateStr(r['日付']),
       manageNum: r['商品管理番号'] || '',
       name: r['商品名'] || r['商品管理番号'] || '不明',
       spend: num(r[rppItemSpendKey]),
@@ -3423,6 +3429,21 @@ async function generateDashboardHtml() {
       orders: num(r[adOrdersKey]),
       newCust: num(r[adNewCustKey]),
       newSales: num(r[adNewSalesKey]),
+    });
+  });
+
+  // CPA data by month
+  const cpaByMonth = {};
+  cpaRaw.data.forEach(r => {
+    const ym = toYM(r['日付']);
+    if (!ym) return;
+    if (!cpaByMonth[ym]) cpaByMonth[ym] = [];
+    cpaByMonth[ym].push({
+      date: r['日付'] || '',
+      spend: num(r['ご請求額']),
+      sales: num(r['効果保証型広告（楽天CPA広告）経由の売上']),
+      rate: r['料率'] || '',
+      status: r['確定／未確定'] || '',
     });
   });
 
@@ -3769,6 +3790,7 @@ async function generateDashboardHtml() {
     rppKwByMonth,
     tdaByMonth,
     adByMonth,
+    cpaByMonth,
     lineByMonth,
     afiByMonth,
     mailData,
@@ -4027,10 +4049,8 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="tab-bar-inner">
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
-    <div class="main-tab" data-tab="tab-acq">集客チャネル</div>
-    <div class="main-tab" data-tab="tab-repeat">リピート</div>
-    <div class="main-tab" data-tab="tab-basket">バスケット分析</div>
-    <div class="main-tab" data-tab="tab-ltv">LTV分析</div>
+    <div class="main-tab" data-tab="tab-acq">CRM分析</div>
+    <div class="main-tab" data-tab="tab-customer">顧客分析</div>
   </div>
 </nav>
 
@@ -4080,6 +4100,11 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <select id="productItemSelect" class="filter-select" style="width:auto;min-width:300px;max-width:500px">
         <option value="">商品を選択してください</option>
       </select>
+      <span class="filter-label" style="margin-left:16px">期間</span>
+      <input type="date" id="productDateFrom" class="filter-select" style="width:auto">
+      <span>〜</span>
+      <input type="date" id="productDateTo" class="filter-select" style="width:auto">
+      <button id="productDateClear" style="padding:4px 10px;font-size:12px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer">クリア</button>
     </div>
     <div id="productMonthlyWrap" style="overflow-x:auto"></div>
   </div>
@@ -4091,40 +4116,56 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div id="adCards" class="cards-grid"></div>
   <div class="section-box">
     <div class="sub-tabs" id="adSubTabs">
-      <div class="sub-tab active" data-subtab="ad-rpp-all">RPP全体</div>
-      <div class="sub-tab" data-subtab="ad-rpp-item">RPP商品別</div>
-      <div class="sub-tab" data-subtab="ad-rpp-kw">RPPキーワード</div>
-      <div class="sub-tab" data-subtab="ad-tda">TDA</div>
+      <div class="sub-tab active" data-subtab="ad-rpp">RPP広告</div>
       <div class="sub-tab" data-subtab="ad-rakuten">楽天広告</div>
+      <div class="sub-tab" data-subtab="ad-tda">TDA広告</div>
+      <div class="sub-tab" data-subtab="ad-cpa">CPA広告</div>
+      <div class="sub-tab" data-subtab="ad-afi">アフィリエイト</div>
     </div>
-    <div class="sub-panel active" id="ad-rpp-all">
-      <div id="rppKpiRow" class="kpi-row"></div>
-      <div class="chart-wrap chart-sm"><canvas id="chartRppDaily"></canvas></div>
-    </div>
-    <div class="sub-panel" id="ad-rpp-item">
-      <div id="rppItemTableWrap"></div>
-    </div>
-    <div class="sub-panel" id="ad-rpp-kw">
-      <div id="rppKwTableWrap"></div>
-    </div>
-    <div class="sub-panel" id="ad-tda">
-      <div id="tdaKpiRow" class="kpi-row"></div>
-      <div id="tdaTableWrap"></div>
+    <div class="sub-panel active" id="ad-rpp">
+      <div class="sub-tabs" id="rppSubTabs" style="margin-bottom:12px;border-bottom:1px solid #e0e0e0">
+        <div class="sub-tab active" data-subtab="rpp-all">全体</div>
+        <div class="sub-tab" data-subtab="rpp-item">商品別</div>
+        <div class="sub-tab" data-subtab="rpp-kw">KW別</div>
+      </div>
+      <div class="sub-panel active" id="rpp-all">
+        <div id="rppKpiRow" class="kpi-row"></div>
+        <div class="chart-wrap chart-sm"><canvas id="chartRppDaily"></canvas></div>
+      </div>
+      <div class="sub-panel" id="rpp-item">
+        <div id="rppItemTableWrap"></div>
+      </div>
+      <div class="sub-panel" id="rpp-kw">
+        <div id="rppKwTableWrap"></div>
+      </div>
     </div>
     <div class="sub-panel" id="ad-rakuten">
       <div id="adRakutenKpiRow" class="kpi-row"></div>
       <div id="adRakutenTableWrap"></div>
     </div>
+    <div class="sub-panel" id="ad-tda">
+      <div id="tdaKpiRow" class="kpi-row"></div>
+      <div id="tdaTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="ad-cpa">
+      <div id="cpaKpiRow" class="kpi-row"></div>
+      <div id="cpaTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="ad-afi">
+      <div id="afiKpiRow" class="kpi-row"></div>
+      <div id="afiByProductTableWrap"></div>
+      <div style="margin-top:16px"><div class="section-title">料率別集計</div></div>
+      <div id="afiByRateTableWrap"></div>
+    </div>
   </div>
 </div>
 
-<!-- Tab 3: 集客チャネル -->
+<!-- Tab 3: CRM分析 -->
 <div class="tab-panel" id="tab-acq">
-  <div class="panel-title">集客チャネル</div>
+  <div class="panel-title">CRM分析</div>
   <div class="section-box">
     <div class="sub-tabs" id="acqSubTabs">
       <div class="sub-tab active" data-subtab="acq-line">LINE</div>
-      <div class="sub-tab" data-subtab="acq-afi">アフィリエイト</div>
       <div class="sub-tab" data-subtab="acq-mail">メルマガ</div>
     </div>
     <div class="sub-panel active" id="acq-line">
@@ -4137,14 +4178,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="sub-title" style="margin-top:20px">メッセージ別分析</div>
       <div id="lineTableWrap"></div>
     </div>
-    <div class="sub-panel" id="acq-afi">
-      <div class="sub-title">全体サマリ</div>
-      <div id="afiKpiRow" class="kpi-row"></div>
-      <div class="sub-title" style="margin-top:20px">料率別実績</div>
-      <div id="afiByRateTableWrap"></div>
-      <div class="sub-title" style="margin-top:20px">商品別実績</div>
-      <div id="afiTableWrap"></div>
-    </div>
     <div class="sub-panel" id="acq-mail">
       <div id="mailKpiRow" class="kpi-row"></div>
       <div class="sub-title" style="margin-top:20px">配信分析</div>
@@ -4153,89 +4186,92 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
 </div>
 
-<!-- Tab 4: リピート -->
-<div class="tab-panel" id="tab-repeat">
-  <div class="panel-title">リピート分析</div>
-  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
-    <span class="filter-label">商品フィルタ</span>
-    <select id="repeatProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
-      <option value="">全商品</option>
-    </select>
-  </div>
-  <div id="repeatCards" class="cards-grid"></div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">月別 新規/リピート客数</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartMonthlyNR"></canvas></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">購入回数分布</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartPurchaseDist"></canvas></div>
-    </div>
-  </div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">リピート購入商品ランキング</div>
-      <div id="repeatItemTableWrap"></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">入口商品別 F2転換率</div>
-      <div id="entryItemF2TableWrap"></div>
-    </div>
-  </div>
-</div>
-
-<!-- Tab 5: バスケット分析 -->
-<div class="tab-panel" id="tab-basket">
-  <div class="panel-title">バスケット分析</div>
-  <div id="basketCards" class="cards-grid"></div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">購入点数分布</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartUnitsDist"></canvas></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">同時購入パターン TOP10</div>
-      <div id="basketPairsTable"></div>
-    </div>
-  </div>
+<!-- Tab 4: 顧客分析 -->
+<div class="tab-panel" id="tab-customer">
+  <div class="panel-title">顧客分析</div>
   <div class="section-box">
-    <div class="section-title">商品別 同時購入分析</div>
-    <div style="margin-bottom:14px">
-      <select id="basketProductSelect" class="filter-select" style="width:auto;min-width:300px;max-width:100%">
-        <option value="">商品を選択してください</option>
-      </select>
+    <div class="sub-tabs">
+      <div class="sub-tab active" data-subtab="cust-repeat">リピート</div>
+      <div class="sub-tab" data-subtab="cust-basket">バスケット</div>
+      <div class="sub-tab" data-subtab="cust-ltv">LTV</div>
     </div>
-    <div id="coProductTableWrap"></div>
-  </div>
-</div>
-
-<!-- Tab 6: LTV分析 -->
-<div class="tab-panel" id="tab-ltv">
-  <div class="panel-title">LTV分析（初回購入商品別）</div>
-  <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
-    <span class="filter-label">商品フィルタ</span>
-    <select id="ltvProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
-      <option value="">全商品</option>
-    </select>
-  </div>
-  <div class="section-box">
-    <div class="section-title">初回購入商品別 LTV・F2転換</div>
-    <div id="ltvFirstItemTable"></div>
-  </div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">コホート別 平均LTV</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartCohortLTV"></canvas></div>
+    <div class="sub-panel active" id="cust-repeat">
+      <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+        <span class="filter-label">商品フィルタ</span>
+        <select id="repeatProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+          <option value="">全商品</option>
+        </select>
+      </div>
+      <div id="repeatCards" class="cards-grid"></div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">月別 新規/リピート客数</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartMonthlyNR"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">購入回数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartPurchaseDist"></canvas></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">リピート購入商品ランキング</div>
+          <div id="repeatItemTableWrap"></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">入口商品別 F2転換率</div>
+          <div id="entryItemF2TableWrap"></div>
+        </div>
+      </div>
     </div>
-    <div class="section-box">
-      <div class="section-title">コホート別 F2転換率</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartCohortF2"></canvas></div>
+    <div class="sub-panel" id="cust-basket">
+      <div id="basketCards" class="cards-grid"></div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">購入点数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartUnitsDist"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">同時購入パターン TOP10</div>
+          <div id="basketPairsTable"></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">商品別 同時購入分析</div>
+        <div style="margin-bottom:14px">
+          <select id="basketProductSelect" class="filter-select" style="width:auto;min-width:300px;max-width:100%">
+            <option value="">商品を選択してください</option>
+          </select>
+        </div>
+        <div id="coProductTableWrap"></div>
+      </div>
     </div>
-  </div>
-  <div class="section-box">
-    <div class="section-title">購入回数別 累計金額</div>
-    <div id="ltvCountPriceTable"></div>
+    <div class="sub-panel" id="cust-ltv">
+      <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+        <span class="filter-label">商品フィルタ</span>
+        <select id="ltvProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+          <option value="">全商品</option>
+        </select>
+      </div>
+      <div class="section-box">
+        <div class="section-title">初回購入商品別 LTV・F2転換</div>
+        <div id="ltvFirstItemTable"></div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">コホート別 平均LTV</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartCohortLTV"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">コホート別 F2転換率</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartCohortF2"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">購入回数別 累計金額</div>
+        <div id="ltvCountPriceTable"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -4513,54 +4549,37 @@ function renderProductMonthly() {
     return;
   }
 
-  // Collect monthly data for selected product
-  const months = D.months.slice().reverse(); // chronological
-  const rows = [];
+  const pDateFrom = document.getElementById('productDateFrom').value;
+  const pDateTo = document.getElementById('productDateTo').value;
+  const hasDateRange = pDateFrom && pDateTo;
 
-  // Build per-month metrics
-  const monthMetrics = months.map(ym => {
-    // all_item_raw data
-    const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+  // Helper: compute metrics from items + rppItems arrays
+  function calcMetrics(items, rppItems) {
     const sales = items.reduce((s, r) => s + r.sales, 0);
     const access = items.reduce((s, r) => s + r.access, 0);
     const orders = items.reduce((s, r) => s + r.orders, 0);
-    const cvr = items.length > 0 ? items[0].cvr : 0;
-    const unitPrice = items.length > 0 ? items[0].unitPrice : 0;
+    // For cvr/unitPrice: use weighted avg if multiple months, otherwise raw value
+    const cvr = access > 0 ? (orders / access * 100) : 0;
+    const unitPrice = orders > 0 ? Math.round(sales / orders) : 0;
 
-    // RPP item data - match by manageNum or name
-    const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
     const rppSales = rppItems.reduce((s, r) => s + r.sales, 0);
     const rppClicks = rppItems.reduce((s, r) => s + r.clicks, 0);
     const rppOrders = rppItems.reduce((s, r) => s + r.orders, 0);
     const rppSpend = rppItems.reduce((s, r) => s + r.spend, 0);
 
-    // RPP広告以外
     const nonRppSales = sales - rppSales;
     const nonRppAccess = access - rppClicks;
     const nonRppOrders = orders - rppOrders;
-
-    // 転換率
     const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
     const nonRppCvr = nonRppAccess > 0 ? (nonRppOrders / nonRppAccess * 100) : 0;
-
-    // 客単価
     const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
     const nonRppUnitPrice = nonRppOrders > 0 ? Math.round(nonRppSales / nonRppOrders) : 0;
-
     const rppCpc = rppClicks > 0 ? Math.round(rppSpend / rppClicks) : 0;
     const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
     const tacos = sales > 0 ? (rppSpend / sales * 100) : 0;
 
     return { sales, access, orders, cvr, unitPrice, rppSpend, rppSales, rppClicks, rppOrders, rppCvr, rppUnitPrice, rppCpc, rppRoas, nonRppSales, nonRppAccess, nonRppCvr, nonRppUnitPrice, tacos };
-  });
-
-  // MoM change helper
-  const momChange = (cur, prev) => {
-    if (!prev || prev === 0) return '-';
-    const ch = ((cur - prev) / Math.abs(prev) * 100);
-    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
-    return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
-  };
+  }
 
   const metricDefs = [
     { label: '売上', key: 'sales', fmt: v => yen(v) },
@@ -4580,33 +4599,90 @@ function renderProductMonthly() {
     { label: 'TACOS', key: 'tacos', fmt: v => v.toFixed(1) + '%', rpp: true },
   ];
 
-  let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
-  months.forEach(ym => { html += '<th>' + (D.monthLabels[ym] || ym) + '</th>'; });
-  if (months.length >= 2) html += '<th>前月比</th>';
-  html += '</tr></thead><tbody>';
+  if (hasDateRange) {
+    // Date range mode: aggregate all months in range for all_item_raw, filter by date for rpp_item_raw
+    // Determine which months fall in the date range
+    const fromMonth = pDateFrom.substring(0, 7);
+    const toMonth = pDateTo.substring(0, 7);
+    const filteredMonths = D.months.filter(ym => ym >= fromMonth && ym <= toMonth);
 
-  metricDefs.forEach(def => {
-    const isRpp = !!def.rpp;
-    html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
-    monthMetrics.forEach(m => {
-      html += '<td style="text-align:right">' + def.fmt(m[def.key]) + '</td>';
+    let allItems = [];
+    let allRppItems = [];
+    filteredMonths.forEach(ym => {
+      const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      allItems.push(...items);
+      const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      // Filter RPP items by exact date range
+      rppItems.forEach(r => {
+        if (r.date && r.date >= pDateFrom && r.date <= pDateTo) {
+          allRppItems.push(r);
+        } else if (!r.date) {
+          allRppItems.push(r); // no date info, include
+        }
+      });
     });
-    if (months.length >= 2) {
-      const last = monthMetrics[monthMetrics.length - 1][def.key];
-      const prev = monthMetrics[monthMetrics.length - 2][def.key];
-      html += '<td style="text-align:right">' + momChange(last, prev) + '</td>';
-    }
-    html += '</tr>';
-  });
 
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
+    const metrics = calcMetrics(allItems, allRppItems);
+
+    let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
+    html += '<th style="min-width:120px">' + pDateFrom + ' 〜 ' + pDateTo + '</th>';
+    html += '</tr></thead><tbody>';
+
+    metricDefs.forEach(def => {
+      const isRpp = !!def.rpp;
+      html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
+      html += '<td style="text-align:right">' + def.fmt(metrics[def.key]) + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  } else {
+    // Monthly mode (default)
+    const months = D.months.slice().reverse(); // chronological
+
+    const monthMetrics = months.map(ym => {
+      const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      return calcMetrics(items, rppItems);
+    });
+
+    const momChange = (cur, prev) => {
+      if (!prev || prev === 0) return '-';
+      const ch = ((cur - prev) / Math.abs(prev) * 100);
+      const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+      return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
+    };
+
+    let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
+    months.forEach(ym => { html += '<th>' + (D.monthLabels[ym] || ym) + '</th>'; });
+    if (months.length >= 2) html += '<th>前月比</th>';
+    html += '</tr></thead><tbody>';
+
+    metricDefs.forEach(def => {
+      const isRpp = !!def.rpp;
+      html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
+      monthMetrics.forEach(m => {
+        html += '<td style="text-align:right">' + def.fmt(m[def.key]) + '</td>';
+      });
+      if (months.length >= 2) {
+        const last = monthMetrics[monthMetrics.length - 1][def.key];
+        const prev = monthMetrics[monthMetrics.length - 2][def.key];
+        html += '<td style="text-align:right">' + momChange(last, prev) + '</td>';
+      }
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
 }
 
 function renderAdsTab() {
   const rppData = getMonthData(D.rppByMonth, currentMonth);
   const tdaData = getMonthData(D.tdaByMonth, currentMonth);
   const adData = getMonthData(D.adByMonth, currentMonth);
+  const cpaData = getMonthData(D.cpaByMonth || {}, currentMonth);
   const rppItemData = getMonthData(D.rppItemByMonth, currentMonth);
   const rppKwData = getMonthData(D.rppKwByMonth, currentMonth);
 
@@ -4622,9 +4698,11 @@ function renderAdsTab() {
   const adSpend = sumField(adData, 'spend');
   const adSales = sumField(adData, 'sales');
   const adClicks = sumField(adData, 'clicks');
+  const cpaSpend = sumField(cpaData, 'spend');
+  const cpaSales = sumField(cpaData, 'sales');
 
-  const totalSpend = rppSpend + tdaSpend + adSpend;
-  const totalSales = rppSales + tdaSales + adSales;
+  const totalSpend = rppSpend + tdaSpend + adSpend + cpaSpend;
+  const totalSales = rppSales + tdaSales + adSales + cpaSales;
   const totalRoas = totalSpend > 0 ? (totalSales / totalSpend * 100) : 0;
 
   // Compare
@@ -4633,8 +4711,9 @@ function renderAdsTab() {
     const cr = getMonthData(D.rppByMonth, cmpYm);
     const ct = getMonthData(D.tdaByMonth, cmpYm);
     const ca = getMonthData(D.adByMonth, cmpYm);
-    cTotalSpend = sumField(cr,'spend') + sumField(ct,'spend') + sumField(ca,'spend');
-    cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales');
+    const cc = getMonthData(D.cpaByMonth || {}, cmpYm);
+    cTotalSpend = sumField(cr,'spend') + sumField(ct,'spend') + sumField(ca,'spend') + sumField(cc,'spend');
+    cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales') + sumField(cc,'sales');
   }
 
   // TACOS = 広告費 / 全体売上
@@ -4726,27 +4805,29 @@ function renderAdsTab() {
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
   ], rppItems, { limit: 50 });
 
-  // RPP KW table
-  const rppKwAgg = {};
+  // RPP KW table - 商品ごとにKWを合計して表示
+  const rppKwByProduct = {};
   rppKwData.forEach(r => {
-    const k = r.kw;
-    if (!rppKwAgg[k]) rppKwAgg[k] = { kw: k, spend: 0, sales: 0, clicks: 0, orders: 0 };
-    rppKwAgg[k].spend += r.spend; rppKwAgg[k].sales += r.sales;
-    rppKwAgg[k].clicks += r.clicks; rppKwAgg[k].orders += r.orders;
+    const k = r.name || '不明';
+    if (!rppKwByProduct[k]) rppKwByProduct[k] = { name: k, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    rppKwByProduct[k].spend += r.spend; rppKwByProduct[k].sales += r.sales;
+    rppKwByProduct[k].clicks += r.clicks; rppKwByProduct[k].orders += r.orders;
   });
-  const rppKws = Object.values(rppKwAgg).map(r => ({
+  const rppKwProducts = Object.values(rppKwByProduct).map(r => ({
     ...r,
     roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
     cvr: r.clicks > 0 ? Math.round(r.orders / r.clicks * 10000) / 100 : 0,
+    cpc: r.clicks > 0 ? Math.round(r.spend / r.clicks) : 0,
   })).sort((a, b) => b.sales - a.sales);
   buildTable('rppKwTableWrap', [
-    { key: 'kw', label: 'キーワード', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'name', label: '商品', fmt: v => safe(String(v).substring(0, 50)) },
     { key: 'spend', label: '費用', fmt: v => yen(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
     { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
-  ], rppKws, { limit: 50 });
+  ], rppKwProducts, { limit: 50 });
 
   // TDA
   const tdaTotalOrders = sumField(tdaData, 'orders');
@@ -4813,11 +4894,68 @@ function renderAdsTab() {
     { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
     { key: 'newCust', label: '新規獲得', fmt: v => comma(v) },
   ], adProducts, { limit: 30 });
+
+  // CPA広告
+  document.getElementById('cpaKpiRow').innerHTML = [
+    { label: '請求額', value: yen(cpaSpend) },
+    { label: '経由売上', value: yen(cpaSales) },
+    { label: 'ROAS', value: (cpaSpend > 0 ? (cpaSales/cpaSpend*100).toFixed(0) : 0) + '%' },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  const cpaRows = cpaData.map(r => ({
+    date: r.date,
+    spend: r.spend,
+    sales: r.sales,
+    rate: r.rate,
+    status: r.status,
+    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  buildTable('cpaTableWrap', [
+    { key: 'date', label: '月', fmt: v => safe(v) },
+    { key: 'spend', label: '請求額', fmt: v => yen(v) },
+    { key: 'sales', label: '経由売上', fmt: v => yen(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+    { key: 'rate', label: '料率', fmt: v => safe(v) },
+    { key: 'status', label: 'ステータス', fmt: v => safe(v) },
+  ], cpaRows, { limit: 30 });
+
+  // アフィリエイト
+  const afiData = getMonthData(D.afiByMonth, currentMonth);
+  const afiTotalSales = sumField(afiData, 'sales');
+  const afiTotalReward = sumField(afiData, 'reward');
+  document.getElementById('afiKpiRow').innerHTML = [
+    { label: '成果件数', value: comma(afiData.length) },
+    { label: '売上金額', value: yen(afiTotalSales) },
+    { label: '成果報酬', value: yen(afiTotalReward) },
+    { label: '報酬率', value: afiTotalSales > 0 ? pct(afiTotalReward / afiTotalSales * 100) : '0%' },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  // Affiliate by product
+  const afiAgg = {};
+  afiData.forEach(r => {
+    const k = r.product || r.manageNum || '不明';
+    if (!afiAgg[k]) afiAgg[k] = { product: k, sales: 0, reward: 0, count: 0 };
+    afiAgg[k].sales += r.sales; afiAgg[k].reward += r.reward; afiAgg[k].count += 1;
+  });
+  const afiProducts = Object.values(afiAgg).sort((a, b) => b.sales - a.sales);
+  buildTable('afiByProductTableWrap', [
+    { key: 'product', label: '商品名', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'count', label: '件数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'reward', label: '報酬', fmt: v => yen(v) },
+  ], afiProducts, { limit: 30 });
+
+  // Affiliate by rate
+  buildTable('afiByRateTableWrap', [
+    { key: 'rate', label: '料率', fmt: v => safe(v) },
+    { key: 'count', label: '件数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'reward', label: '報酬', fmt: v => yen(v) },
+  ], D.afiByRateRows || [], { limit: 20 });
 }
 
 function renderAcqTab() {
   const lineData = getMonthData(D.lineByMonth, currentMonth);
-  const afiData = getMonthData(D.afiByMonth, currentMonth);
 
   // LINE KPIs
   const lineTotalSent = sumField(lineData, 'sent');
@@ -4905,39 +5043,6 @@ function renderAcqTab() {
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'salesPerSend', label: '売上/通', fmt: v => yen(Math.round(v * 10) / 10) },
   ], lineForTable, { limit: 50 });
-
-  // Affiliate KPIs
-  const afiTotalSales = sumField(afiData, 'sales');
-  const afiTotalReward = sumField(afiData, 'reward');
-  document.getElementById('afiKpiRow').innerHTML = [
-    { label: '成果件数', value: comma(afiData.length) },
-    { label: '売上金額', value: yen(afiTotalSales) },
-    { label: '成果報酬', value: yen(afiTotalReward) },
-    { label: '報酬率', value: afiTotalSales > 0 ? pct(afiTotalReward / afiTotalSales * 100) : '0%' },
-  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
-
-  // Affiliate by rate
-  buildTable('afiByRateTableWrap', [
-    { key: 'rate', label: '料率', fmt: v => safe(v) },
-    { key: 'count', label: '件数', fmt: v => comma(v) },
-    { key: 'sales', label: '売上', fmt: v => yen(v) },
-    { key: 'reward', label: '報酬', fmt: v => yen(v) },
-  ], D.afiByRateRows || [], { limit: 20 });
-
-  // Affiliate by product
-  const afiAgg = {};
-  afiData.forEach(r => {
-    const k = r.product || r.manageNum || '不明';
-    if (!afiAgg[k]) afiAgg[k] = { product: k, sales: 0, reward: 0, count: 0 };
-    afiAgg[k].sales += r.sales; afiAgg[k].reward += r.reward; afiAgg[k].count += 1;
-  });
-  const afiProducts = Object.values(afiAgg).sort((a, b) => b.sales - a.sales);
-  buildTable('afiTableWrap', [
-    { key: 'product', label: '商品名', fmt: v => safe(String(v).substring(0, 45)) },
-    { key: 'count', label: '件数', fmt: v => comma(v) },
-    { key: 'sales', label: '売上', fmt: v => yen(v) },
-    { key: 'reward', label: '報酬', fmt: v => yen(v) },
-  ], afiProducts, { limit: 30 });
 
   // Mail KPIs + table
   const mailData = D.mailParsed || [];
@@ -5170,7 +5275,7 @@ function renderBasketTab() {
 
 function renderLTVTab() {
   if (!D.hasOrders) {
-    document.getElementById('tab-ltv').querySelectorAll('.section-box').forEach(el => {
+    document.getElementById('cust-ltv').querySelectorAll('.section-box').forEach(el => {
       el.innerHTML = '<div class="no-data">受注データなし</div>';
     });
     return;
@@ -5367,10 +5472,16 @@ document.querySelectorAll('.main-tab').forEach(tab => {
 document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
   tabGroup.querySelectorAll('.sub-tab').forEach(tab => {
     tab.addEventListener('click', function() {
-      const parent = this.closest('.section-box');
-      parent.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
-      parent.querySelectorAll('.sub-panel').forEach(p => p.classList.remove('active'));
+      const parentTabs = this.closest('.sub-tabs');
+      // Deactivate sibling tabs
+      parentTabs.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
       this.classList.add('active');
+      // Find the container that holds sibling panels (parent of the sub-tabs)
+      const container = parentTabs.parentElement;
+      // Only toggle panels that are direct children of the same container
+      Array.from(container.children).forEach(el => {
+        if (el.classList.contains('sub-panel')) el.classList.remove('active');
+      });
       const target = document.getElementById(this.dataset.subtab);
       if (target) target.classList.add('active');
     });
@@ -5443,8 +5554,15 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
   });
 });
 
-// Product item selector
+// Product item selector & date range
 document.getElementById('productItemSelect').addEventListener('change', renderProductMonthly);
+document.getElementById('productDateFrom').addEventListener('change', renderProductMonthly);
+document.getElementById('productDateTo').addEventListener('change', renderProductMonthly);
+document.getElementById('productDateClear').addEventListener('click', function() {
+  document.getElementById('productDateFrom').value = '';
+  document.getElementById('productDateTo').value = '';
+  renderProductMonthly();
+});
 
 // Repeat product filter
 document.getElementById('repeatProductFilter').addEventListener('change', renderRepeatTab);
