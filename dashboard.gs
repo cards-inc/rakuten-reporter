@@ -5,7 +5,7 @@ const SS_ID = '1V-CgRs9xpjbbaqb3OasgiCEYxfXP7_bpNsZFso-eiZI';
 
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle('楽天ダッシュボード')
+    .setTitle('百福堂_楽天ストアアナリティクス')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 

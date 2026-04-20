@@ -3659,6 +3659,98 @@ async function generateDashboardHtml() {
     .sort((a, b) => b.avgLTV - a.avgLTV)
     .slice(0, 30);
 
+  // Repeat item analysis - which products get repeat-purchased
+  const repeatItemAnalysis = {};
+  Object.entries(customerOrders).forEach(([email, ords]) => {
+    const itemCounts = {};
+    ords.forEach(o => {
+      const key = o.manageNum || o.itemName || '不明';
+      itemCounts[key] = (itemCounts[key] || 0) + 1;
+    });
+    Object.entries(itemCounts).forEach(([item, cnt]) => {
+      if (!repeatItemAnalysis[item]) repeatItemAnalysis[item] = { item, totalBuyers: 0, repeatBuyers: 0, totalPurchases: 0 };
+      repeatItemAnalysis[item].totalBuyers++;
+      repeatItemAnalysis[item].totalPurchases += cnt;
+      if (cnt >= 2) repeatItemAnalysis[item].repeatBuyers++;
+    });
+  });
+  const repeatItemRows = Object.values(repeatItemAnalysis)
+    .map(r => ({ ...r, repeatRate: r.totalBuyers > 0 ? Math.round(r.repeatBuyers / r.totalBuyers * 1000) / 10 : 0 }))
+    .sort((a, b) => b.repeatBuyers - a.repeatBuyers)
+    .slice(0, 30);
+
+  // Entry item F2 analysis (same as firstItemLTV but sorted by f2Rate)
+  const entryItemF2Rows = Object.values(firstItemLTV)
+    .map(r => ({
+      item: r.item,
+      count: r.count,
+      avgLTV: r.count > 0 ? Math.round(r.totalLTV / r.count) : 0,
+      f2Rate: r.count > 0 ? Math.round(r.repeatCount / r.count * 1000) / 10 : 0,
+      repeatCount: r.repeatCount,
+    }))
+    .filter(r => r.count >= 2) // at least 2 customers
+    .sort((a, b) => b.f2Rate - a.f2Rate)
+    .slice(0, 30);
+
+  // Per-product co-purchase map for basket selector
+  const coProductMap = {};
+  const productList = new Set();
+  uniqueOrdersList.forEach(o => {
+    const items = [...new Set(o.manageNums.filter(Boolean))];
+    items.forEach(item => {
+      productList.add(item);
+      if (!coProductMap[item]) coProductMap[item] = {};
+      items.forEach(other => {
+        if (other !== item) {
+          coProductMap[item][other] = (coProductMap[item][other] || 0) + 1;
+        }
+      });
+    });
+  });
+  const coProductData = {};
+  Object.entries(coProductMap).forEach(([item, others]) => {
+    coProductData[item] = Object.entries(others)
+      .map(([other, count]) => ({ item: other, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+  });
+  const basketProducts = [...productList].sort();
+
+  // Mail data - parse with proper columns
+  const mailParsed = mailRaw.data.map(r => {
+    const dateKey = mailRaw.headers.find(h => h && (h.includes('配信日') || h.includes('日時') || h.includes('日付'))) || '配信日時';
+    const subjectKey = mailRaw.headers.find(h => h && (h.includes('件名') || h.includes('タイトル') || h.includes('メール名'))) || '件名';
+    const sentKey = mailRaw.headers.find(h => h && (h.includes('配信数') || h.includes('配信通数') || h.includes('送信数'))) || '配信数';
+    const openKey = mailRaw.headers.find(h => h && h.includes('開封数')) || '開封数';
+    const openRateKey = mailRaw.headers.find(h => h && h.includes('開封率')) || '開封率';
+    const clickKey = mailRaw.headers.find(h => h && h.includes('クリック数')) || 'クリック数';
+    const clickRateKey = mailRaw.headers.find(h => h && h.includes('クリック率')) || 'クリック率';
+    const salesKey = mailRaw.headers.find(h => h && h.includes('売上')) || '売上金額';
+    const ordersKey = mailRaw.headers.find(h => h && (h.includes('売上件数') || h.includes('注文数') || h.includes('転換数'))) || '売上件数';
+    return {
+      date: r[dateKey] || '',
+      subject: r[subjectKey] || '',
+      sent: num(r[sentKey]),
+      opened: num(r[openKey]),
+      openRate: r[openRateKey] || '',
+      clicks: num(r[clickKey]),
+      clickRate: r[clickRateKey] || '',
+      sales: num(r[salesKey]),
+      orders: num(r[ordersKey]),
+    };
+  }).filter(r => r.date || r.subject);
+
+  // Affiliate by rate
+  const afiByRate = {};
+  afiRaw.data.forEach(r => {
+    const rate = r['料率'] || '不明';
+    if (!afiByRate[rate]) afiByRate[rate] = { rate, sales: 0, reward: 0, count: 0 };
+    afiByRate[rate].sales += num(r['売上金額']);
+    afiByRate[rate].reward += num(r['成果報酬']);
+    afiByRate[rate].count += 1;
+  });
+  const afiByRateRows = Object.values(afiByRate).sort((a, b) => b.sales - a.sales);
+
   // ── Build the master JSON payload ──
   const dashboardData = {
     updatedAt: dateStr,
@@ -3682,6 +3774,8 @@ async function generateDashboardHtml() {
       f2Rate: Math.round(f2Rate * 100) / 100,
       purchaseDistRows,
       monthlyNR: monthlyNRData,
+      repeatItemRows,
+      entryItemF2Rows,
     },
     basketAnalysis: {
       totalOrders: uniqueOrdersList.length,
@@ -3690,12 +3784,16 @@ async function generateDashboardHtml() {
       crossSellRate: Math.round(crossSellRate * 100) / 100,
       topPairs,
       unitsDistRows,
+      coProductData,
+      basketProducts,
     },
     ltvAnalysis: {
       cohortLTV: cohortLTVData,
       purchaseCountPrice: purchaseCountPriceRows,
       firstItemLTV: firstItemLTVRows,
     },
+    mailParsed,
+    afiByRateRows,
   };
 
   const dataJson = JSON.stringify(dashboardData);
@@ -3708,13 +3806,13 @@ async function generateDashboardHtml() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>楽天ストア アナリティクス</title>
+<title>百福堂_楽天ストアアナリティクス</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"><\/script>
 <style>
 :root {
-  --c-primary: #bf0000;
-  --c-primary-light: #e53935;
-  --c-primary-bg: rgba(191,0,0,0.06);
+  --c-primary: #1a3a5c;
+  --c-primary-light: #2d5f8a;
+  --c-primary-bg: rgba(26,58,92,0.06);
   --c-bg: #f3f5f9;
   --c-surface: #ffffff;
   --c-border: #e8eaed;
@@ -3906,9 +4004,12 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 </head>
 <body>
 
-<header class="app-header">
+<header class="app-header" onclick="location.reload()" style="cursor:pointer">
   <div class="header-inner">
-    <div class="header-title">楽天ストア アナリティクス</div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <img src="https://cards-inc.co.jp/wp-content/uploads/2024/06/cards-inc-logo.webp" alt="CARDS" style="height:32px;border-radius:4px" onerror="this.style.display='none'">
+      <div class="header-title">百福堂_楽天ストアアナリティクス</div>
+    </div>
     <div class="header-meta">更新: ${safe(dateStr)}</div>
   </div>
 </header>
@@ -3918,7 +4019,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
     <div class="main-tab" data-tab="tab-acq">集客チャネル</div>
-    <div class="main-tab" data-tab="tab-products">商品分析</div>
     <div class="main-tab" data-tab="tab-repeat">リピート/F2分析</div>
     <div class="main-tab" data-tab="tab-basket">バスケット分析</div>
     <div class="main-tab" data-tab="tab-ltv">LTV分析</div>
@@ -3929,13 +4029,17 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="filter-bar-inner">
     <div class="filter-group">
       <span class="filter-label">期間</span>
+      <select id="periodType" class="filter-select" style="width:auto;min-width:80px">
+        <option value="month">月</option>
+        <option value="day">日</option>
+      </select>
       <select id="monthFilter" class="filter-select"></select>
+      <input type="date" id="dayFilter" class="filter-select" style="display:none;width:auto">
     </div>
     <div class="filter-group">
       <span class="filter-label">比較</span>
       <div class="compare-toggle">
-        <button class="compare-btn active" data-compare="none">なし</button>
-        <button class="compare-btn" data-compare="mom">前月比</button>
+        <button class="compare-btn active" data-compare="mom">前月比</button>
         <button class="compare-btn" data-compare="yoy">前年同月比</button>
       </div>
     </div>
@@ -4014,40 +4118,32 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="sub-tab" data-subtab="acq-mail">メルマガ</div>
     </div>
     <div class="sub-panel active" id="acq-line">
+      <div class="sub-title">全体分析</div>
       <div id="lineKpiRow" class="kpi-row"></div>
+      <div class="grid-2">
+        <div class="chart-wrap chart-sm"><canvas id="chartLineTrend"></canvas></div>
+        <div class="chart-wrap chart-sm"><canvas id="chartLinePerf"></canvas></div>
+      </div>
+      <div class="sub-title" style="margin-top:20px">メッセージ別分析</div>
       <div id="lineTableWrap"></div>
     </div>
     <div class="sub-panel" id="acq-afi">
+      <div class="sub-title">全体サマリ</div>
       <div id="afiKpiRow" class="kpi-row"></div>
+      <div class="sub-title" style="margin-top:20px">料率別実績</div>
+      <div id="afiByRateTableWrap"></div>
+      <div class="sub-title" style="margin-top:20px">商品別実績</div>
       <div id="afiTableWrap"></div>
     </div>
     <div class="sub-panel" id="acq-mail">
-      <div id="mailContent"></div>
+      <div id="mailKpiRow" class="kpi-row"></div>
+      <div class="sub-title" style="margin-top:20px">配信分析</div>
+      <div id="mailTableWrap"></div>
     </div>
   </div>
 </div>
 
-<!-- Tab 4: 商品分析 -->
-<div class="tab-panel" id="tab-products">
-  <div class="panel-title">商品分析</div>
-  <div class="section-box">
-    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
-      <input type="text" id="productSearch" class="search-box" placeholder="商品名で検索...">
-      <div class="filter-group">
-        <span class="filter-label">並び替え</span>
-        <select id="productSort" class="filter-select">
-          <option value="sales">売上順</option>
-          <option value="access">アクセス順</option>
-          <option value="cvr">CVR順</option>
-          <option value="orders">件数順</option>
-        </select>
-      </div>
-    </div>
-    <div id="productTableWrap"></div>
-  </div>
-</div>
-
-<!-- Tab 5: リピート/F2分析 -->
+<!-- Tab 4: リピート/F2分析 -->
 <div class="tab-panel" id="tab-repeat">
   <div class="panel-title">リピート/F2分析</div>
   <div id="repeatCards" class="cards-grid"></div>
@@ -4061,9 +4157,19 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="chart-wrap chart-sm"><canvas id="chartPurchaseDist"></canvas></div>
     </div>
   </div>
+  <div class="grid-2">
+    <div class="section-box">
+      <div class="section-title">リピート購入商品ランキング</div>
+      <div id="repeatItemTableWrap"></div>
+    </div>
+    <div class="section-box">
+      <div class="section-title">入口商品別 F2転換率</div>
+      <div id="entryItemF2TableWrap"></div>
+    </div>
+  </div>
 </div>
 
-<!-- Tab 6: バスケット分析 -->
+<!-- Tab 5: バスケット分析 -->
 <div class="tab-panel" id="tab-basket">
   <div class="panel-title">バスケット分析</div>
   <div id="basketCards" class="cards-grid"></div>
@@ -4077,11 +4183,24 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div id="basketPairsTable"></div>
     </div>
   </div>
+  <div class="section-box">
+    <div class="section-title">商品別 同時購入分析</div>
+    <div style="margin-bottom:14px">
+      <select id="basketProductSelect" class="filter-select" style="width:auto;min-width:300px;max-width:100%">
+        <option value="">商品を選択してください</option>
+      </select>
+    </div>
+    <div id="coProductTableWrap"></div>
+  </div>
 </div>
 
-<!-- Tab 7: LTV分析 -->
+<!-- Tab 6: LTV分析 -->
 <div class="tab-panel" id="tab-ltv">
-  <div class="panel-title">LTV分析</div>
+  <div class="panel-title">LTV分析（初回購入商品別）</div>
+  <div class="section-box">
+    <div class="section-title">初回購入商品別 LTV・F2転換</div>
+    <div id="ltvFirstItemTable"></div>
+  </div>
   <div class="grid-2">
     <div class="section-box">
       <div class="section-title">コホート別 平均LTV</div>
@@ -4092,15 +4211,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="chart-wrap chart-sm"><canvas id="chartCohortF2"></canvas></div>
     </div>
   </div>
-  <div class="grid-2">
-    <div class="section-box">
-      <div class="section-title">購入回数別 累計金額</div>
-      <div id="ltvCountPriceTable"></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">初回購入商品別 LTV</div>
-      <div id="ltvFirstItemTable"></div>
-    </div>
+  <div class="section-box">
+    <div class="section-title">購入回数別 累計金額</div>
+    <div id="ltvCountPriceTable"></div>
   </div>
 </div>
 
@@ -4123,7 +4236,9 @@ const safe = s => {
 
 // ── State ──
 let currentMonth = 'all';
-let compareMode = 'none'; // none, mom, yoy
+let compareMode = 'mom'; // mom, yoy
+let periodType = 'month'; // month, day
+let currentDay = null;
 const chartInstances = {};
 
 function destroyChart(id) {
@@ -4147,7 +4262,7 @@ if (D.months.length > 0) {
 
 // ── Compare month calculation ──
 function getCompareMonth(ym, mode) {
-  if (!ym || ym === 'all' || mode === 'none') return null;
+  if (!ym || ym === 'all') return null;
   const [y, m] = ym.split('-').map(Number);
   if (mode === 'mom') {
     const pm = m === 1 ? 12 : m - 1;
@@ -4174,6 +4289,16 @@ function changeHtml(changeVal) {
 
 // ── Data getters ──
 function getMonthData(dataByMonth, ym) {
+  // 日次モード: currentDayから月を自動導出
+  if (periodType === 'day' && currentDay) {
+    const dayParts = currentDay.split('-');
+    const dayYm = dayParts.length >= 2 ? dayParts[0] + '-' + dayParts[1] : ym;
+    const monthData = dataByMonth[dayYm] || [];
+    return monthData.filter(r => {
+      const d = (r.date || '').replace(/\\//g, '-');
+      return d === currentDay;
+    });
+  }
   if (ym === 'all') {
     const all = [];
     Object.values(dataByMonth).forEach(arr => all.push(...arr));
@@ -4291,7 +4416,7 @@ function renderSalesTab() {
       data: {
         labels,
         datasets: [
-          { label: '売上金額', data: salesArr, borderColor: 'var(--c-primary)', backgroundColor: 'rgba(191,0,0,0.06)', fill: true, yAxisID: 'y', tension: 0.3, pointRadius: 2 },
+          { label: '売上金額', data: salesArr, borderColor: 'var(--c-primary)', backgroundColor: 'rgba(26,58,92,0.06)', fill: true, yAxisID: 'y', tension: 0.3, pointRadius: 2 },
           { label: 'アクセス', data: accessArr, borderColor: '#1a73e8', borderDash: [5,3], yAxisID: 'y1', tension: 0.3, pointRadius: 1 },
           { label: '件数', data: ordersArr, borderColor: '#0d904f', borderDash: [2,2], yAxisID: 'y1', tension: 0.3, pointRadius: 1 },
         ]
@@ -4316,7 +4441,7 @@ function renderSalesTab() {
       data: {
         labels,
         datasets: [
-          { label: '売上金額', data: salesArr, backgroundColor: 'rgba(191,0,0,0.6)', yAxisID: 'y', order: 1 },
+          { label: '売上金額', data: salesArr, backgroundColor: 'rgba(26,58,92,0.6)', yAxisID: 'y', order: 1 },
           { label: '件数', data: ordersArr, type: 'line', borderColor: '#0d904f', yAxisID: 'y1', tension: 0.3, pointRadius: 1, order: 0 },
         ]
       },
@@ -4409,7 +4534,7 @@ function renderAdsTab() {
       type: 'doughnut',
       data: {
         labels: ['RPP', 'TDA', '楽天広告'],
-        datasets: [{ data: [rppSpend, tdaSpend, adSpend], backgroundColor: ['#bf0000', '#1a73e8', '#e8710a'] }]
+        datasets: [{ data: [rppSpend, tdaSpend, adSpend], backgroundColor: ['#1a3a5c', '#2196F3', '#e8710a'] }]
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '広告費構成' }, legend: { position: 'bottom' } } }
     });
@@ -4420,7 +4545,7 @@ function renderAdsTab() {
       type: 'doughnut',
       data: {
         labels: ['RPP', 'TDA', '楽天広告'],
-        datasets: [{ data: [rppSales, tdaSales, adSales], backgroundColor: ['#bf0000', '#1a73e8', '#e8710a'] }]
+        datasets: [{ data: [rppSales, tdaSales, adSales], backgroundColor: ['#1a3a5c', '#2196F3', '#e8710a'] }]
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: '売上構成' }, legend: { position: 'bottom' } } }
     });
@@ -4449,7 +4574,7 @@ function renderAdsTab() {
       data: {
         labels: rLabels,
         datasets: [
-          { label: '費用', data: rppSorted.map(r => r.spend), backgroundColor: 'rgba(191,0,0,0.5)', yAxisID: 'y', order: 1 },
+          { label: '費用', data: rppSorted.map(r => r.spend), backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 1 },
           { label: '売上', data: rppSorted.map(r => r.sales), type: 'line', borderColor: '#0d904f', yAxisID: 'y', tension: 0.3, pointRadius: 1, order: 0 },
         ]
       },
@@ -4583,26 +4708,89 @@ function renderAcqTab() {
   const lineTotalSales = sumField(lineData, 'sales');
   const lineTotalConversions = sumField(lineData, 'conversions');
   const lineTotalVisitors = sumField(lineData, 'visitors');
+  const lineTotalOpened = sumField(lineData, 'opened');
+  const lineAvgOpenRate = lineTotalSent > 0 ? (lineTotalOpened / lineTotalSent * 100) : 0;
+  const lineAvgCvr = lineTotalVisitors > 0 ? (lineTotalConversions / lineTotalVisitors * 100) : 0;
+  const lineSalesPerSend = lineTotalSent > 0 ? lineTotalSales / lineTotalSent : 0;
   document.getElementById('lineKpiRow').innerHTML = [
     { label: '配信数', value: comma(lineData.length) + '回' },
     { label: '配信通数', value: comma(lineTotalSent) },
-    { label: '訪問者数', value: comma(lineTotalVisitors) },
-    { label: '転換数', value: comma(lineTotalConversions) },
-    { label: '売上', value: yen(lineTotalSales) },
+    { label: '��均開封率', value: pct1(lineAvgOpenRate) },
+    { label: '���問者数', value: comma(lineTotalVisitors) },
+    { label: '転換率', value: pct(lineAvgCvr) },
+    { label: '���上合計', value: yen(lineTotalSales) },
+    { label: '売上/通', value: yen(Math.round(lineSalesPerSend * 10) / 10) },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
-  const lineSorted = [...lineData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  // LINE trend chart
+  destroyChart('chartLineTrend');
+  const lineSorted = [...lineData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (lineSorted.length > 0) {
+    chartInstances['chartLineTrend'] = new Chart(document.getElementById('chartLineTrend'), {
+      type: 'bar',
+      data: {
+        labels: lineSorted.map(r => { const d = String(r.date).substring(0, 10); return d; }),
+        datasets: [
+          { label: '売上', data: lineSorted.map(r => r.sales), backgroundColor: 'rgba(26,58,92,0.6)', yAxisID: 'y', order: 1 },
+          { label: '��問者', data: lineSorted.map(r => r.visitors), type: 'line', borderColor: '#06b6d4', yAxisID: 'y1', tension: 0.3, pointRadius: 2, order: 0 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top' }, title: { display: true, text: '配信別 売上・訪問者推移' } },
+        scales: {
+          y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
+          y1: { position: 'right', grid: { drawOnChartArea: false } }
+        }
+      }
+    });
+  }
+
+  // LINE performance chart (open rate vs cvr)
+  destroyChart('chartLinePerf');
+  if (lineSorted.length > 0) {
+    chartInstances['chartLinePerf'] = new Chart(document.getElementById('chartLinePerf'), {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: '開封率 vs 転換率',
+          data: lineSorted.map(r => ({
+            x: r.sent > 0 ? (r.opened / r.sent * 100) : 0,
+            y: r.visitors > 0 ? (r.conversions / r.visitors * 100) : 0,
+            title: r.title,
+          })),
+          backgroundColor: 'rgba(26,58,92,0.6)',
+          pointRadius: 6, pointHoverRadius: 8,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          title: { display: true, text: '開封率 vs 転換率' },
+          tooltip: { callbacks: { label: ctx => (ctx.raw.title || '') + ' 開封:' + ctx.raw.x.toFixed(1) + '% CVR:' + ctx.raw.y.toFixed(1) + '%' } }
+        },
+        scales: {
+          x: { title: { display: true, text: '開封率(%)' } },
+          y: { title: { display: true, text: '転換率(%)' }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // LINE message table
+  const lineForTable = [...lineData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('lineTableWrap', [
     { key: 'date', label: '配信日時', fmt: v => safe(String(v).substring(0, 16)) },
-    { key: 'title', label: 'タイトル', fmt: v => safe(String(v).substring(0, 35)) },
+    { key: 'title', label: '���イトル', fmt: v => safe(String(v).substring(0, 35)) },
     { key: 'sent', label: '配信通数', fmt: v => comma(v) },
     { key: 'openRate', label: '開封率', fmt: v => safe(v) },
     { key: 'visitors', label: '訪問者', fmt: v => comma(v) },
     { key: 'conversions', label: '転換数', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
-  ], lineSorted, { limit: 50 });
+    { key: 'salesPerSend', label: '売上/通', fmt: v => yen(Math.round(v * 10) / 10) },
+  ], lineForTable, { limit: 50 });
 
-  // Affiliate
+  // Affiliate KPIs
   const afiTotalSales = sumField(afiData, 'sales');
   const afiTotalReward = sumField(afiData, 'reward');
   document.getElementById('afiKpiRow').innerHTML = [
@@ -4612,7 +4800,15 @@ function renderAcqTab() {
     { label: '報酬率', value: afiTotalSales > 0 ? pct(afiTotalReward / afiTotalSales * 100) : '0%' },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
-  // Agg by product
+  // Affiliate by rate
+  buildTable('afiByRateTableWrap', [
+    { key: 'rate', label: '料率', fmt: v => safe(v) },
+    { key: 'count', label: '件数', fmt: v => comma(v) },
+    { key: 'sales', label: '���上', fmt: v => yen(v) },
+    { key: 'reward', label: '報酬', fmt: v => yen(v) },
+  ], D.afiByRateRows || [], { limit: 20 });
+
+  // Affiliate by product
   const afiAgg = {};
   afiData.forEach(r => {
     const k = r.product || r.manageNum || '不明';
@@ -4627,51 +4823,33 @@ function renderAcqTab() {
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
   ], afiProducts, { limit: 30 });
 
-  // Mail
-  const mailEl = document.getElementById('mailContent');
-  if (D.mailData.length > 0) {
-    mailEl.innerHTML = '<div class="kpi-item" style="max-width:200px"><div class="kpi-label">配信データ</div><div class="kpi-val">' + D.mailData.length + '件</div></div>';
-  } else {
-    mailEl.innerHTML = '<div class="no-data">メルマガデータなし</div>';
-  }
-}
+  // Mail KPIs + table
+  const mailData = D.mailParsed || [];
+  const mailTotalSent = sumField(mailData, 'sent');
+  const mailTotalOpened = sumField(mailData, 'opened');
+  const mailTotalClicks = sumField(mailData, 'clicks');
+  const mailTotalSales = sumField(mailData, 'sales');
+  const mailTotalOrders = sumField(mailData, 'orders');
+  document.getElementById('mailKpiRow').innerHTML = [
+    { label: '配信回数', value: comma(mailData.length) + '回' },
+    { label: '配信数', value: comma(mailTotalSent) },
+    { label: '開封数', value: comma(mailTotalOpened) },
+    { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
+    { label: 'クリック数', value: comma(mailTotalClicks) },
+    { label: '売上', value: yen(mailTotalSales) },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
-function renderProductsTab() {
-  const data = getMonthData(D.allItemByMonth, currentMonth);
-  const searchTerm = (document.getElementById('productSearch').value || '').toLowerCase();
-  const sortKey = document.getElementById('productSort').value;
-
-  // Aggregate by product
-  const agg = {};
-  data.forEach(r => {
-    const k = r.manageNum || r.name;
-    if (!agg[k]) agg[k] = { name: r.name, manageNum: r.manageNum, access: 0, sales: 0, orders: 0 };
-    agg[k].access += r.access; agg[k].sales += r.sales; agg[k].orders += r.orders;
-    if (!agg[k].name || agg[k].name === '不明') agg[k].name = r.name;
-  });
-  let items = Object.values(agg).map(r => ({
-    ...r,
-    cvr: r.access > 0 ? Math.round(r.orders / r.access * 10000) / 100 : 0,
-    unitPrice: r.orders > 0 ? Math.round(r.sales / r.orders) : 0,
-  }));
-
-  if (searchTerm) {
-    items = items.filter(r => (r.name + ' ' + r.manageNum).toLowerCase().includes(searchTerm));
-  }
-
-  const sortMap = { sales: 'sales', access: 'access', cvr: 'cvr', orders: 'orders' };
-  const sk = sortMap[sortKey] || 'sales';
-  items.sort((a, b) => b[sk] - a[sk]);
-
-  buildTable('productTableWrap', [
-    { key: 'name', label: '商品名', fmt: v => safe(String(v).substring(0, 55)) },
-    { key: 'manageNum', label: '管理番号', fmt: v => safe(String(v).substring(0, 20)) },
-    { key: 'access', label: 'アクセス', fmt: v => comma(v) },
-    { key: 'orders', label: '件数', fmt: v => comma(v) },
+  const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  buildTable('mailTableWrap', [
+    { key: 'date', label: '配信日��', fmt: v => safe(String(v).substring(0, 16)) },
+    { key: 'subject', label: '件名', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'sent', label: '���信数', fmt: v => comma(v) },
+    { key: 'opened', label: '開��数', fmt: v => comma(v) },
+    { key: 'openRate', label: '開封率', fmt: v => safe(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
-    { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
-    { key: 'unitPrice', label: '客単価', fmt: v => yen(v) },
-  ], items, { limit: 100 });
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+  ], mailSorted, { limit: 50 });
 }
 
 function renderRepeatTab() {
@@ -4697,7 +4875,7 @@ function renderRepeatTab() {
       data: {
         labels: nr.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#bf0000' },
+          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c' },
           { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800' },
         ]
       },
@@ -4725,6 +4903,24 @@ function renderRepeatTab() {
       }
     });
   }
+
+  // Repeat item ranking
+  buildTable('repeatItemTableWrap', [
+    { key: 'item', label: '商品', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'totalBuyers', label: '購入者数', fmt: v => comma(v) },
+    { key: 'repeatBuyers', label: 'リピーター数', fmt: v => comma(v) },
+    { key: 'repeatRate', label: 'リピート率', fmt: v => pct1(v) },
+    { key: 'totalPurchases', label: '総購入回数', fmt: v => comma(v) },
+  ], ra.repeatItemRows || [], { limit: 30 });
+
+  // Entry item F2 conversion
+  buildTable('entryItemF2TableWrap', [
+    { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
+    { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
+    { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + pct1(v) + '</span>' },
+    { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+  ], ra.entryItemF2Rows || [], { limit: 30 });
 }
 
 function renderBasketTab() {
@@ -4763,6 +4959,17 @@ function renderBasketTab() {
     { key: 'b', label: '商品B', fmt: v => safe(String(v).substring(0, 30)) },
     { key: 'count', label: '回数', fmt: v => comma(v) },
   ], ba.topPairs, { limit: 20 });
+
+  // Product selector for co-purchase
+  const sel = document.getElementById('basketProductSelect');
+  if (sel.options.length <= 1 && ba.basketProducts) {
+    ba.basketProducts.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      sel.appendChild(opt);
+    });
+  }
+  renderCoProducts();
 }
 
 function renderLTVTab() {
@@ -4782,7 +4989,7 @@ function renderLTVTab() {
       data: {
         labels: ltv.cohortLTV.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: '平均LTV', data: ltv.cohortLTV.map(r => r.avgLTV), backgroundColor: 'rgba(191,0,0,0.7)', yAxisID: 'y' },
+          { label: '平均LTV', data: ltv.cohortLTV.map(r => r.avgLTV), backgroundColor: 'rgba(26,58,92,0.7)', yAxisID: 'y' },
           { label: '顧客数', data: ltv.cohortLTV.map(r => r.customers), type: 'line', borderColor: '#1a73e8', yAxisID: 'y1', tension: 0.3, pointRadius: 2 },
         ]
       },
@@ -4832,12 +5039,29 @@ function renderLTVTab() {
   ], ltv.firstItemLTV, { limit: 30 });
 }
 
+function renderCoProducts() {
+  const sel = document.getElementById('basketProductSelect');
+  const selected = sel ? sel.value : '';
+  if (!selected) {
+    document.getElementById('coProductTableWrap').innerHTML = '<div class="no-data">商品を選択してください</div>';
+    return;
+  }
+  const coData = (D.basketAnalysis.coProductData || {})[selected] || [];
+  if (coData.length === 0) {
+    document.getElementById('coProductTableWrap').innerHTML = '<div class="no-data">同時購入データなし</div>';
+    return;
+  }
+  buildTable('coProductTableWrap', [
+    { key: 'item', label: '同時購入商品', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'count', label: '同時購入回数', fmt: v => comma(v) },
+  ], coData, { limit: 20 });
+}
+
 // ── Render all ──
 function renderAll() {
   renderSalesTab();
   renderAdsTab();
   renderAcqTab();
-  renderProductsTab();
   renderRepeatTab();
   renderBasketTab();
   renderLTVTab();
@@ -4870,6 +5094,41 @@ document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
   });
 });
 
+// Period type toggle (月/日)
+const periodTypeSelect = document.getElementById('periodType');
+const dayFilter = document.getElementById('dayFilter');
+// 日付の選択肢を設定（all_rawの全日付を収集、YYYY-MM-DD形式に正規化）
+const allDates = [];
+D.months.forEach(ym => {
+  (D.allByMonth[ym] || []).forEach(r => {
+    if (r.date) {
+      const normalized = r.date.replace(/\\//g, '-');
+      if (!allDates.includes(normalized)) allDates.push(normalized);
+    }
+  });
+});
+allDates.sort().reverse();
+if (allDates.length > 0) dayFilter.value = allDates[0];
+
+periodTypeSelect.addEventListener('change', function() {
+  periodType = this.value;
+  if (periodType === 'day') {
+    monthSelect.style.display = 'none';
+    dayFilter.style.display = '';
+    currentDay = dayFilter.value;
+  } else {
+    monthSelect.style.display = '';
+    dayFilter.style.display = 'none';
+    currentDay = null;
+  }
+  renderAll();
+});
+
+dayFilter.addEventListener('change', function() {
+  currentDay = this.value;
+  renderAll();
+});
+
 // Month filter
 monthSelect.addEventListener('change', function() {
   currentMonth = this.value;
@@ -4886,9 +5145,8 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
   });
 });
 
-// Product search/sort
-document.getElementById('productSearch').addEventListener('input', renderProductsTab);
-document.getElementById('productSort').addEventListener('change', renderProductsTab);
+// Basket product selector
+document.getElementById('basketProductSelect').addEventListener('change', renderCoProducts);
 
 // Initial render
 renderAll();
