@@ -3765,7 +3765,7 @@ async function generateDashboardHtml() {
     }
   };
 
-  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, cpaRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw, masterRaw] = await Promise.all([
+  const [allRaw, rppAllRaw, rppItemRaw, rppKwRaw, tdaRaw, adRaw, cpaRaw, mailRaw, lineRaw, afiRaw, allItemRaw, orderRaw, masterRaw, shareForecastRaw] = await Promise.all([
     readSheet('all_raw'),
     readSheet('rpp_all_raw'),
     readSheet('rpp_item_raw'),
@@ -3779,6 +3779,7 @@ async function generateDashboardHtml() {
     readSheet('all_item_raw'),
     readSheet('order_raw'),
     readSheet('master'),
+    readSheet('share_forecast'),
   ]);
 
   // order_rawデバッグ
@@ -4494,6 +4495,12 @@ async function generateDashboardHtml() {
     mailParsed,
     afiByRateRows,
     rakutenEvents,
+    shareForecast: shareForecastRaw.data.map(r => {
+      const raw = String(r['日程'] || '').replace(/\//g, '-');
+      const m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      const date = m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : raw;
+      return { date, share: parseFloat(String(r['シェア%'] || '0').replace('%', '')) };
+    }).filter(r => r.date && !isNaN(r.share)),
   };
 
   const dataJson = JSON.stringify(dashboardData);
@@ -4765,6 +4772,11 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
+  <div id="forecastPanel" class="section-box" style="display:none;margin-bottom:16px">
+    <div class="section-title">売上着地予測（マーケ予測ベース）</div>
+    <div id="forecastCards" class="cards-grid"></div>
+    <div id="forecastTable" style="overflow-x:auto;margin-top:8px"></div>
+  </div>
   <div class="grid-2" style="grid-template-columns:2fr 1fr">
     <div class="section-box">
       <div class="section-title">売上KPIツリー</div>
@@ -5258,6 +5270,67 @@ function renderSalesTab() {
     '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
   ).join('');
 
+  // ── 着地予測（マーケ予測ベース） ──
+  const forecastPanel = document.getElementById('forecastPanel');
+  const shareForecasts = D.shareForecast || [];
+  // 選択月のシェアデータを抽出
+  const ymParts = currentMonth.split('-');
+  const sfYm = ymParts[0] + '-' + ymParts[1].padStart(2, '0');
+  const sfMonth = shareForecasts.filter(sf => sf.date.substring(0, 7) === sfYm);
+  if (sfMonth.length > 0 && data.length > 0) {
+    forecastPanel.style.display = '';
+    // 日別売上マップ
+    const dailySalesMap = {};
+    data.forEach(r => { const d = String(r.date).split('/').join('-'); dailySalesMap[d] = r.sales || 0; });
+    // 当月シェア合計
+    const totalShare = sfMonth.reduce((s, r) => s + r.share, 0);
+    // 実績ある日のシェア合計と売上合計
+    let actualShareSum = 0, actualSalesSum = 0, actualDays = 0;
+    const forecastRows = [];
+    const today = new Date().toISOString().substring(0, 10);
+    sfMonth.forEach(sf => {
+      const ds = sf.date;
+      const actual = dailySalesMap[ds] !== undefined ? dailySalesMap[ds] : null;
+      const isPast = ds <= today && actual !== null;
+      if (isPast) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
+      forecastRows.push({ date: ds, share: sf.share, actual, isPast });
+    });
+    // 着地予測 = 実績合計 ÷ 経過日シェア合計 × 月全体シェア合計
+    const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
+    const remainShare = totalShare - actualShareSum;
+    const remainDays = sfMonth.length - actualDays;
+    const achieveRate = landingForecast > 0 ? (actualSalesSum / landingForecast * 100) : 0;
+
+    const fcCards = [
+      { label: '当月実績', value: yen(actualSalesSum), sub: actualDays + '日経過' },
+      { label: '着地予測', value: yen(landingForecast), sub: '残' + remainDays + '日（シェア' + remainShare.toFixed(1) + '%）' },
+      { label: '達成率', value: achieveRate.toFixed(1) + '%', sub: '予測対比' },
+      { label: '残日平均必要売上', value: remainDays > 0 ? yen(Math.round((landingForecast - actualSalesSum) / remainDays)) : '-', sub: '残日割り' },
+    ];
+    document.getElementById('forecastCards').innerHTML = fcCards.map(c =>
+      '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + (c.sub || '') + '</div></div>'
+    ).join('');
+
+    // 日別テーブル
+    const fCols = [
+      { key: 'date', label: '日付' },
+      { key: 'share', label: 'シェア%', fmt: v => v.toFixed(1) + '%' },
+      { key: 'actual', label: '実績売上', fmt: v => v !== null ? yen(v) : '<span style="color:#bbb">—</span>' },
+      { key: 'cumActual', label: '累計売上', fmt: v => v > 0 ? yen(v) : '' },
+      { key: 'cumShare', label: '累計シェア%', fmt: v => v.toFixed(1) + '%' },
+      { key: 'projLanding', label: '着地予測', fmt: v => v > 0 ? yen(v) : '' },
+    ];
+    let cumActual = 0, cumShare = 0;
+    forecastRows.forEach(r => {
+      if (r.isPast) { cumActual += r.actual; cumShare += r.share; }
+      r.cumActual = cumActual; r.cumShare = cumShare;
+      r.projLanding = cumShare > 0 ? Math.round(cumActual / cumShare * totalShare) : 0;
+    });
+    buildTable('forecastTable', fCols, forecastRows, { limit: 50 });
+  } else {
+    forecastPanel.style.display = 'none';
+  }
+
   // Daily chart
   const sorted = [...data].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const labels = sorted.map(r => {
@@ -5406,25 +5479,45 @@ function renderSalesTab() {
       };
     });
 
+    // シェア予測データをマッピング
+    const shareMap = {};
+    (D.shareForecast || []).forEach(sf => { if (sf.date) shareMap[sf.date] = sf.share; });
+    const shareData = dailyDates.map(d => shareMap[d] !== undefined ? shareMap[d] : null);
+    const hasShare = shareData.some(v => v !== null);
+
+    const datasets = [
+      { label: 'RPP経由売上金額', data: rppDaySales, backgroundColor: 'rgba(66,133,244,0.7)', stack: 'a', yAxisID: 'y' },
+      { label: '広告外売上金額', data: nonRppDaySales, backgroundColor: 'rgba(234,179,8,0.7)', stack: 'a', yAxisID: 'y' },
+    ];
+    if (hasShare) {
+      datasets.push({
+        label: 'マーケ予測シェア%', data: shareData, type: 'line',
+        borderColor: '#e53935', backgroundColor: 'rgba(229,57,53,0.1)',
+        borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#e53935',
+        fill: false, tension: 0.3, yAxisID: 'y1', spanGaps: true,
+      });
+    }
+
     chartInstances['chartDailyRppSplit'] = new Chart(document.getElementById('chartDailyRppSplit'), {
       type: 'bar',
-      data: {
-        labels: dayLabels,
-        datasets: [
-          { label: 'RPP経由売上金額', data: rppDaySales, backgroundColor: 'rgba(66,133,244,0.7)', stack: 'a' },
-          { label: '広告外売上金額', data: nonRppDaySales, backgroundColor: 'rgba(234,179,8,0.7)', stack: 'a' },
-        ]
-      },
+      data: { labels: dayLabels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { position: 'bottom' },
-          tooltip: { mode: 'index', callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw), footer: items => '合計: ' + yen(items.reduce((s, i) => s + i.raw, 0)) } },
+          tooltip: { mode: 'index', callbacks: {
+            label: ctx => {
+              if (ctx.dataset.yAxisID === 'y1') return ctx.dataset.label + ': ' + ctx.raw + '%';
+              return ctx.dataset.label + ': ' + yen(ctx.raw);
+            },
+            footer: items => { const salesItems = items.filter(i => i.dataset.yAxisID !== 'y1'); return salesItems.length > 0 ? '合計: ' + yen(salesItems.reduce((s, i) => s + i.raw, 0)) : ''; }
+          }},
           annotation: { annotations: eventAnnotations },
         },
         scales: {
           x: { stacked: true },
-          y: { stacked: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } }
+          y: { stacked: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
+          y1: hasShare ? { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: 'シェア%', font: { size: 11 } } } : { display: false },
         }
       }
     });
@@ -6285,9 +6378,9 @@ function renderRepeatTab() {
       data: {
         labels: nrLabels,
         datasets: [
-          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c', stack: 'a', yAxisID: 'y' },
-          { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800', stack: 'a', yAxisID: 'y' },
-          { label: 'リピート率', data: nrRepeatRates, type: 'line', borderColor: '#e53935', backgroundColor: 'transparent', pointRadius: 4, pointBackgroundColor: '#e53935', tension: 0.3, yAxisID: 'y1' },
+          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c', stack: 'a', yAxisID: 'y', order: 2 },
+          { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800', stack: 'a', yAxisID: 'y', order: 2 },
+          { label: 'リピート率', data: nrRepeatRates, type: 'line', borderColor: '#e53935', backgroundColor: 'transparent', pointRadius: 4, pointBackgroundColor: '#e53935', borderWidth: 3, tension: 0.3, yAxisID: 'y1', order: 0 },
         ]
       },
       options: {
