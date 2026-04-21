@@ -4571,13 +4571,7 @@ thead th {
 }
 thead th:hover { background: #eef0f2; }
 thead th:first-child { text-align: left; }
-thead th { cursor: pointer; user-select: none; }
-thead th { cursor: pointer; user-select: none; }
-thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; }
-thead th.sorted .sort-icon { opacity: 1; color: var(--c-primary); }
-thead th.sorted-asc .sort-icon::after { content: '▲'; }
-thead th.sorted-desc .sort-icon::after { content: '▼'; }
-thead th:not(.sorted) .sort-icon::after { content: '⇅'; }
+thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; display: inline; }
 tbody td {
   padding: 9px 12px; text-align: right; border-bottom: 1px solid #f0f0f0;
   white-space: nowrap; font-variant-numeric: tabular-nums;
@@ -5096,41 +5090,55 @@ function buildTable(containerId, columns, rows, opts = {}) {
     return;
   }
   const limit = opts.limit || 100;
-  const displayed = rows.slice(0, limit);
+
+  function renderBody(data) {
+    let h = '';
+    data.slice(0, limit).forEach(row => {
+      h += '<tr>';
+      columns.forEach(c => {
+        const v = row[c.key];
+        h += '<td>' + (c.fmt ? c.fmt(v, row) : safe(v)) + '</td>';
+      });
+      h += '</tr>';
+    });
+    return h;
+  }
+
   let html = '<div class="table-wrap"><table><thead><tr>';
   columns.forEach((c, ci) => {
-    html += '<th data-col="' + ci + '" data-key="' + (c.key||'') + '"><span>' + safe(c.label) + '</span><span class="sort-icon"></span></th>';
+    html += '<th data-col="' + ci + '" data-key="' + (c.key||'') + '" style="cursor:pointer;user-select:none"><span>' + safe(c.label) + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
   });
-  html += '</tr></thead><tbody>';
-  displayed.forEach(row => {
-    html += '<tr>';
-    columns.forEach(c => {
-      const v = row[c.key];
-      const formatted = c.fmt ? c.fmt(v, row) : safe(v);
-      html += '<td>' + formatted + '</td>';
-    });
-    html += '</tr>';
-  });
-  html += '</tbody></table></div>';
+  html += '</tr></thead><tbody>' + renderBody(rows) + '</tbody></table></div>';
   el.innerHTML = html;
 
   // Sortable headers
+  let currentRows = [...rows];
   el.querySelectorAll('thead th').forEach(th => {
     th.addEventListener('click', function() {
       const key = this.dataset.key;
       const col = columns.find(c => c.key === key);
       if (!col) return;
-      const asc = this.classList.contains('sorted-asc');
-      el.querySelectorAll('th').forEach(t => { t.classList.remove('sorted', 'sorted-asc', 'sorted-desc'); });
-      this.classList.add('sorted', asc ? 'sorted-desc' : 'sorted-asc');
-      const sorted = [...rows].sort((a, b) => {
-        let va = a[key], vb = b[key];
-        if (typeof va === 'number' && typeof vb === 'number') return asc ? vb - va : va - vb;
-        va = Number(va); vb = Number(vb);
-        if (!isNaN(va) && !isNaN(vb)) return asc ? vb - va : va - vb;
-        return asc ? String(b[key]||'').localeCompare(String(a[key]||'')) : String(a[key]||'').localeCompare(String(b[key]||''));
+      const wasAsc = this.dataset.sortDir === 'asc';
+      const newDir = wasAsc ? 'desc' : 'asc';
+      // Reset all headers
+      el.querySelectorAll('thead th').forEach(t => {
+        t.dataset.sortDir = '';
+        const si = t.querySelector('.sort-icon');
+        if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; si.style.color = ''; }
       });
-      buildTable(containerId, columns, sorted, opts);
+      // Set current header
+      this.dataset.sortDir = newDir;
+      const si = this.querySelector('.sort-icon');
+      if (si) { si.textContent = newDir === 'asc' ? '▲' : '▼'; si.style.opacity = '1'; si.style.color = '#1a73e8'; }
+      // Sort
+      currentRows = [...rows].sort((a, b) => {
+        let va = a[key], vb = b[key];
+        if (typeof va === 'number' && typeof vb === 'number') return newDir === 'asc' ? va - vb : vb - va;
+        const na = Number(va), nb = Number(vb);
+        if (!isNaN(na) && !isNaN(nb)) return newDir === 'asc' ? na - nb : nb - na;
+        return newDir === 'asc' ? String(a[key]||'').localeCompare(String(b[key]||'')) : String(b[key]||'').localeCompare(String(a[key]||''));
+      });
+      el.querySelector('tbody').innerHTML = renderBody(currentRows);
     });
   });
 }
