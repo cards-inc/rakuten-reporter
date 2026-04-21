@@ -4371,6 +4371,7 @@ async function generateDashboardHtml() {
     clickRate: v.sent > 0 ? (v.clicks / v.sent * 100).toFixed(2) + '%' : '-',
     sales: v.sales,
     orders: v.conversions,
+    convRate: v.sent > 0 ? (v.conversions / v.sent * 100).toFixed(2) + '%' : '-',
     sentCount: v.sentCount,
   })).filter(r => r.sent > 0 || r.sales > 0).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
@@ -6189,6 +6190,7 @@ function renderAcqTab() {
     { label: 'クリック数', value: comma(mailTotalClicks) },
     { label: '売上', value: yen(mailTotalSales) },
     { label: '転換数', value: comma(mailTotalOrders) },
+    { label: '転換率', value: mailTotalSent > 0 ? (mailTotalOrders / mailTotalSent * 100).toFixed(2) + '%' : '-' },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -6200,6 +6202,7 @@ function renderAcqTab() {
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'orders', label: '転換数', fmt: v => comma(v) },
+    { key: 'convRate', label: '転換率', fmt: v => safe(v) },
   ], mailSorted, { limit: 50 });
 }
 
