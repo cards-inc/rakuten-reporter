@@ -1594,6 +1594,83 @@ functions.http('fetchRppReport', async (req, res) => {
       const afiBody = await afiPage.evaluate(() => document.body?.innerText?.substring(0, 800) || '');
       console.log('アフィリエイトページ内容:', afiBody.substring(0, 500));
 
+      // ── ログインページ検出 & 再ログイン ──
+      const isAfiLoginPage = await afiPage.evaluate(() => {
+        const body = document.body?.innerText || '';
+        return !!(document.querySelector('input[name="login_id"]') || document.querySelector('input[name="passwd"]') ||
+          body.includes('楽天会員ログインへ') || body.includes('R-login') || body.includes('ログインしてください'));
+      });
+      if (isAfiLoginPage) {
+        console.log('afi: ログインページ検出 → 再ログイン実行');
+        // R-Login画面の場合：login_id + passwd を入力
+        const hasRLoginForm = await afiPage.evaluate(() => !!document.querySelector('input[name="login_id"]'));
+        if (hasRLoginForm) {
+          await afiPage.click('input[name="login_id"]');
+          await afiPage.click('input[name="login_id"]', { clickCount: 3 });
+          await afiPage.keyboard.type(rmsUser, { delay: 30 });
+          await afiPage.click('input[name="passwd"]');
+          await afiPage.click('input[name="passwd"]', { clickCount: 3 });
+          await afiPage.keyboard.type(rmsPass, { delay: 30 });
+          await Promise.all([
+            afiPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(e => console.log('afi login nav timeout:', e.message?.substring(0, 80))),
+            afiPage.evaluate(() => {
+              const btn = document.querySelector('button[type="submit"]') || document.querySelector('.rf-button-primary') || document.querySelector('button');
+              if (btn) btn.click();
+            }),
+          ]);
+          await new Promise(r => setTimeout(r, 3000));
+          console.log('afi: R-Login後URL:', afiPage.url());
+
+          // 楽天会員ログイン(Step2)が必要な場合
+          const needsStep2 = await afiPage.evaluate(() => {
+            return !!(document.querySelector('input[name="username"]') || document.querySelector('input#loginInner_u'));
+          });
+          if (needsStep2) {
+            console.log('afi: 楽天会員ログイン(Step2)が必要');
+            const rakutenEmail = process.env.RMS_2FA_EMAIL;
+            if (rakutenEmail && rakutenPass) {
+              // ユーザー名入力
+              const userInput = await afiPage.evaluate(() => {
+                const inp = document.querySelector('input[name="username"]') || document.querySelector('input#loginInner_u') || document.querySelector('input[type="text"]');
+                return inp ? (inp.name || inp.id || 'found') : null;
+              });
+              if (userInput) {
+                const sel = 'input[name="username"], input#loginInner_u, input[type="text"]';
+                await afiPage.click(sel);
+                await afiPage.click(sel, { clickCount: 3 });
+                await afiPage.keyboard.type(rakutenEmail, { delay: 30 });
+              }
+              // パスワード入力
+              const passInput = await afiPage.evaluate(() => {
+                const inp = document.querySelector('input[name="password"]') || document.querySelector('input#loginInner_p') || document.querySelector('input[type="password"]');
+                return inp ? (inp.name || inp.id || 'found') : null;
+              });
+              if (passInput) {
+                const psel = 'input[name="password"], input#loginInner_p, input[type="password"]';
+                await afiPage.click(psel);
+                await afiPage.click(psel, { clickCount: 3 });
+                await afiPage.keyboard.type(rakutenPass, { delay: 30 });
+              }
+              await Promise.all([
+                afiPage.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(e => console.log('afi step2 nav timeout:', e.message?.substring(0, 80))),
+                afiPage.evaluate(() => {
+                  const btn = document.querySelector('button[type="submit"]') || document.querySelector('input[type="submit"]') || document.querySelector('.loginButton');
+                  if (btn) btn.click();
+                }),
+              ]);
+              await new Promise(r => setTimeout(r, 3000));
+              console.log('afi: Step2後URL:', afiPage.url());
+            } else {
+              console.log('afi: RMS_2FA_EMAIL/RMS_2FA_PASSWORD 未設定のためStep2ログイン不可');
+            }
+          }
+        }
+        // 再ログイン後のページを更新
+        allPages = await browser.pages();
+        afiPage = allPages[allPages.length - 1];
+        console.log('afi: 再ログイン完了URL:', afiPage.url());
+      }
+
       // 成果速報－注文一覧ページへ直接遷移
       console.log('\u6210\u679C\u901F\u5831\u2015\u6CE8\u6587\u4E00\u89A7\u3078\u76F4\u63A5\u9077\u79FB: https://afl.rms.rakuten.co.jp/report#pending');
       await afiPage.goto('https://afl.rms.rakuten.co.jp/report#pending', { waitUntil: 'networkidle2', timeout: 30000 });
@@ -1686,14 +1763,19 @@ functions.http('fetchRppReport', async (req, res) => {
           }
         }, csvUrl);
 
-        // CSV取���
+        // CSV取得＋HTML検出
         let afiRecords = [];
         if (csvContent.error) {
           console.log(`afi_raw [${monthLabel}]: CSV fetch error: ${csvContent.error}`);
         } else if (csvContent.base64) {
-          console.log(`afi_raw [${monthLabel}]: CSV fetch ok size=${csvContent.size}`);
           const buf = Buffer.from(csvContent.base64, 'base64');
-          afiRecords = processDownload({ fileName: 'afi.csv', buffer: buf });
+          const head = buf.toString('utf8', 0, Math.min(100, buf.length));
+          if (head.includes('<!DOCTYPE') || head.includes('<html')) {
+            console.log(`afi_raw [${monthLabel}]: HTMLが返却された（セッション切れの可能性）。スキップ`);
+          } else {
+            console.log(`afi_raw [${monthLabel}]: CSV fetch ok size=${csvContent.size}`);
+            afiRecords = processDownload({ fileName: 'afi.csv', buffer: buf });
+          }
         }
 
         if (afiRecords.length > 0) {
