@@ -4534,13 +4534,13 @@ body {
 .chart-xs { height: 200px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
-.table-wrap { overflow-x: auto; margin: 8px 0; }
+.table-wrap { overflow-x: auto; overflow-y: auto; max-height: 480px; margin: 8px 0; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
   background: #f8f9fa; color: var(--c-text-secondary); padding: 10px 12px;
   text-align: right; white-space: nowrap; font-weight: 600; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.3px;
-  border-bottom: 2px solid var(--c-border); position: sticky; top: 0;
+  border-bottom: 2px solid var(--c-border); position: sticky; top: 0; z-index: 2;
   cursor: pointer; user-select: none; transition: background 0.15s;
 }
 thead th:hover { background: #eef0f2; }
