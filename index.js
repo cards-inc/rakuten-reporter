@@ -4996,7 +4996,8 @@ function renderAdsTab() {
   const adData = getAllMonthData(D.adByMonth);
   const cpaData = getAllMonthData(D.cpaByMonth || {});
   const rppItemData = getMonthData(D.rppItemByMonth, currentMonth);
-  const rppKwData = getMonthData(D.rppKwByMonth, currentMonth);
+  // rpp_kw_rawも月次データのため全期間表示
+  const rppKwData = getAllMonthData(D.rppKwByMonth);
 
   const cmpYm = getCompareMonth(currentMonth, compareMode);
 
