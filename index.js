@@ -4294,7 +4294,8 @@ async function generateDashboardHtml() {
   // Affiliate by rate
   const afiByRate = {};
   afiRaw.data.forEach(r => {
-    const rate = r['料率'] || '不明';
+    const rateRaw = r['料率'] || '不明';
+    const rate = String(rateRaw).includes('%') ? rateRaw : rateRaw + '%';
     if (!afiByRate[rate]) afiByRate[rate] = { rate, sales: 0, reward: 0, count: 0 };
     afiByRate[rate].sales += num(r['売上金額']);
     afiByRate[rate].reward += num(r['成果報酬']);
@@ -4707,7 +4708,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <!-- Tab: 商品別分析 -->
 <div class="tab-panel" id="tab-product">
   <div class="panel-title">商品別分析</div>
-  <div id="productTableWrap" style="overflow-x:auto"></div>
+  <div id="productTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
   <div class="section-box" style="margin-top:20px">
     <div class="section-title">月別推移</div>
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
@@ -4723,7 +4724,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
         <option value="rppRoas">RPP ROAS</option>
       </select>
     </div>
-    <div id="productMonthlyTableWrap" style="overflow-x:auto"></div>
+    <div id="productMonthlyTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
   </div>
   <div class="section-box" style="margin-top:20px">
     <div class="section-title">カテゴリ別実績</div>
@@ -5437,8 +5438,8 @@ function renderProductTab() {
 
   let html = '<table style="font-size:12px;width:100%"><thead><tr>';
   cols.forEach(c => {
-    const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#f8f9fa;z-index:1;' : '';
-    html += '<th style="' + stickyStyle + 'text-align:' + (c.align || 'right') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '">' + c.label + '</th>';
+    const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#f8f9fa;z-index:3;' : '';
+    html += '<th style="position:sticky;top:0;background:#f8f9fa;z-index:2;' + (c.sticky ? 'left:0;z-index:3;' : '') + 'text-align:' + (c.align || 'right') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '"><span>' + c.label + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
   });
   html += '</tr></thead><tbody>';
 
@@ -5467,8 +5468,9 @@ function renderProductTab() {
     th.addEventListener('click', function() {
       const key = this.dataset.sortKey;
       const asc = this.dataset.sortDir === 'asc';
-      wrap.querySelectorAll('th').forEach(t => delete t.dataset.sortDir);
+      wrap.querySelectorAll('th').forEach(t => { delete t.dataset.sortDir; const si = t.querySelector('.sort-icon'); if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; } });
       this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const si = this.querySelector('.sort-icon'); if (si) { si.textContent = asc ? '▼' : '▲'; si.style.opacity = '1'; si.style.color = 'var(--c-primary)'; }
       const sorted = [...rows].sort((a, b) => {
         let va, vb;
         if (key === '_salesRatio') { va = a.sales; vb = b.sales; }
@@ -5642,16 +5644,16 @@ function renderProductMonthlyTable() {
 
   // ヘッダー: 各月に値+前月比+前年同月比
   let html = '<table style="font-size:12px;width:100%;border-collapse:collapse"><thead><tr>';
-  html += '<th rowspan="2" style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:2;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="mn">商品管理番号</th>';
+  html += '<th rowspan="2" style="text-align:left;position:sticky;left:0;top:0;background:#f8f9fa;z-index:4;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="mn"><span>商品管理番号</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
   validMonths.forEach(ym => {
-    html += '<th colspan="3" style="text-align:center;border-bottom:1px solid #eee;white-space:nowrap">' + (D.monthLabels[ym] || ym) + '</th>';
+    html += '<th colspan="3" style="text-align:center;position:sticky;top:0;background:#f8f9fa;z-index:2;border-bottom:1px solid #eee;white-space:nowrap">' + (D.monthLabels[ym] || ym) + '</th>';
   });
-  html += '<th rowspan="2" style="cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="total">合計</th>';
+  html += '<th rowspan="2" style="position:sticky;top:0;background:#f8f9fa;z-index:2;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="total"><span>合計</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
   html += '</tr><tr>';
   validMonths.forEach(ym => {
-    html += '<th style="cursor:pointer;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="' + ym + '">値</th>';
-    html += '<th style="font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前月比</th>';
-    html += '<th style="font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前年比</th>';
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;cursor:pointer;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="' + ym + '"><span>値</span><span class="sort-icon" style="font-size:9px;margin-left:2px;opacity:0.3">⇅</span></th>';
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前月比</th>';
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前年比</th>';
   });
   html += '</tr></thead><tbody>';
 
@@ -5681,8 +5683,9 @@ function renderProductMonthlyTable() {
     th.addEventListener('click', function() {
       const key = this.dataset.msortKey;
       const asc = this.dataset.sortDir === 'asc';
-      mWrap.querySelectorAll('th').forEach(t => delete t.dataset.sortDir);
+      mWrap.querySelectorAll('th').forEach(t => { delete t.dataset.sortDir; const si = t.querySelector('.sort-icon'); if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; si.style.color = ''; } });
       this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const si = this.querySelector('.sort-icon'); if (si) { si.textContent = asc ? '▼' : '▲'; si.style.opacity = '1'; si.style.color = 'var(--c-primary)'; }
       const sorted = [...mnList].sort((a, b) => {
         if (key === 'mn') return asc ? b.localeCompare(a) : a.localeCompare(b);
         if (key === 'total') {
