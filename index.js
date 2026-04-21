@@ -3784,28 +3784,54 @@ async function generateDashboardHtml() {
   const basketProducts = [...productList].sort();
 
   // Mail data - parse with proper columns
-  const mailParsed = mailRaw.data.map(r => {
-    const dateKey = mailRaw.headers.find(h => h && (h.includes('配信日') || h.includes('日時') || h.includes('日付'))) || '配信日時';
-    const subjectKey = mailRaw.headers.find(h => h && (h.includes('件名') || h.includes('タイトル') || h.includes('メール名'))) || '件名';
-    const sentKey = mailRaw.headers.find(h => h && (h.includes('配信数') || h.includes('配信通数') || h.includes('送信数'))) || '配信数';
-    const openKey = mailRaw.headers.find(h => h && h.includes('開封数')) || '開封数';
-    const openRateKey = mailRaw.headers.find(h => h && h.includes('開封率')) || '開封率';
-    const clickKey = mailRaw.headers.find(h => h && h.includes('クリック数')) || 'クリック数';
-    const clickRateKey = mailRaw.headers.find(h => h && h.includes('クリック率')) || 'クリック率';
-    const salesKey = mailRaw.headers.find(h => h && h.includes('売上')) || '売上金額';
-    const ordersKey = mailRaw.headers.find(h => h && (h.includes('売上件数') || h.includes('注文数') || h.includes('転換数'))) || '売上件数';
-    return {
-      date: toDateStr(r[dateKey]),
-      subject: r[subjectKey] || '',
-      sent: num(r[sentKey]),
-      opened: num(r[openKey]),
-      openRate: r[openRateKey] || '',
-      clicks: num(r[clickKey]),
-      clickRate: r[clickRateKey] || '',
-      sales: num(r[salesKey]),
-      orders: num(r[ordersKey]),
-    };
-  }).filter(r => r.date || r.subject);
+  // mail_raw columns: 年月, 区分, デバイス, メール種別, 保有数, 配信回数, 送信数, 開封数, 開封率(%), 送客数, 送客率(%), クリック数, お気に入り登録数, お気に入り登録率(%), 転換数, 転換率(%), 売上, 売上/通
+  const mailH = mailRaw.headers;
+  const mailDateKey = mailH.find(h => h && (h.includes('年月') || h.includes('配信日') || h.includes('日時') || h.includes('日付'))) || '年月';
+  const mailTypeKey = mailH.find(h => h && h.includes('メール種別')) || 'メール種別';
+  const mailDeviceKey = mailH.find(h => h && h.includes('デバイス')) || 'デバイス';
+  const mailCategoryKey = mailH.find(h => h && h.includes('区分')) || '区分';
+  const mailSentCountKey = mailH.find(h => h && h.includes('配信回数')) || '配信回数';
+  const mailSentKey = mailH.find(h => h && (h === '送信数' || h.includes('送信数'))) || '送信数';
+  const mailOpenKey = mailH.find(h => h && h.includes('開封数')) || '開封数';
+  const mailOpenRateKey = mailH.find(h => h && h.includes('開封率')) || '開封率(%)';
+  const mailClickKey = mailH.find(h => h && h.includes('クリック数')) || 'クリック数';
+  const mailSalesKey = mailH.find(h => h && h === '売上') || mailH.find(h => h && h.includes('売上') && !h.includes('/')) || '売上';
+  const mailSalesPerKey = mailH.find(h => h && h.includes('売上/通')) || '売上/通';
+  const mailConvKey = mailH.find(h => h && h.includes('転換数')) || '転換数';
+  const mailConvRateKey = mailH.find(h => h && h.includes('転換率')) || '転換率(%)';
+  // Aggregate by 年月 (全体/全デバイス or sum)
+  const mailByYM = {};
+  mailRaw.data.forEach(r => {
+    const ymRaw = r[mailDateKey] || '';
+    const ym = toYM(ymRaw);
+    if (!ym) return;
+    const device = (r[mailDeviceKey] || '').trim();
+    const category = (r[mailCategoryKey] || '').trim();
+    // 全体行のみ集計（デバイス=全体, 区分=自店舗）
+    if (device !== '全体' && device !== '') return;
+    if (category && category !== '自店舗') return;
+    const mailType = (r[mailTypeKey] || '').trim();
+    if (!mailByYM[ym]) mailByYM[ym] = { sentCount: 0, sent: 0, opened: 0, clicks: 0, sales: 0, conversions: 0, types: [] };
+    mailByYM[ym].sentCount += num(r[mailSentCountKey]);
+    mailByYM[ym].sent += num(r[mailSentKey]);
+    mailByYM[ym].opened += num(r[mailOpenKey]);
+    mailByYM[ym].clicks += num(r[mailClickKey]);
+    mailByYM[ym].sales += num(r[mailSalesKey]);
+    mailByYM[ym].conversions += num(r[mailConvKey]);
+    if (mailType) mailByYM[ym].types.push(mailType);
+  });
+  const mailParsed = Object.entries(mailByYM).map(([ym, v]) => ({
+    date: ym,
+    subject: [...new Set(v.types)].join(', ') || '全体',
+    sent: v.sent,
+    opened: v.opened,
+    openRate: v.sent > 0 ? (v.opened / v.sent * 100).toFixed(1) + '%' : '-',
+    clicks: v.clicks,
+    clickRate: v.sent > 0 ? (v.clicks / v.sent * 100).toFixed(2) + '%' : '-',
+    sales: v.sales,
+    orders: v.conversions,
+    sentCount: v.sentCount,
+  })).filter(r => r.sent > 0 || r.sales > 0).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   // Affiliate by rate
   const afiByRate = {};
@@ -3877,7 +3903,7 @@ async function generateDashboardHtml() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>百福堂_楽天ストアアナリティクス</title>
+<title>楽天市場アナリティクス 百福堂</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"><\/script>
 <style>
@@ -3917,7 +3943,7 @@ body {
   display: flex; align-items: center; justify-content: space-between;
   height: 56px;
 }
-.header-title { font-size: 18px; font-weight: 700; letter-spacing: 0.5px; }
+.header-title { font-size: 18px; font-weight: 700; letter-spacing: 1.5px; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; text-transform: uppercase; }
 .header-meta { font-size: 12px; opacity: 0.85; }
 .tab-bar {
   background: var(--c-surface); border-bottom: 1px solid var(--c-border);
@@ -4097,7 +4123,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="header-inner">
     <div style="display:flex;align-items:center;gap:10px">
       <img src="cards_logo.png" alt="CARDS" style="height:32px" onerror="this.style.display='none'">
-      <div class="header-title">百福堂_楽天ストアアナリティクス</div>
+      <div class="header-title">楽天市場アナリティクス 百福堂</div>
     </div>
     <div class="header-meta">更新: ${safe(dateStr)}</div>
   </div>
@@ -4140,13 +4166,15 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
-  <div class="section-box" style="max-width:400px">
-    <div class="section-title">新規/リピート購入比率</div>
-    <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
-  </div>
-  <div class="section-box">
-    <div class="section-title">売上KPIツリー</div>
-    <div id="salesTreeWrap" style="overflow-x:auto"></div>
+  <div class="grid-2" style="grid-template-columns:1fr 2fr">
+    <div class="section-box">
+      <div class="section-title">新規/リピート購入比率</div>
+      <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
+    </div>
+    <div class="section-box">
+      <div class="section-title">売上KPIツリー</div>
+      <div id="salesTreeWrap" style="overflow-x:auto"></div>
+    </div>
   </div>
   <div class="section-box">
     <div class="section-title">日別売上（RPP経由 / 広告外）</div>
@@ -4210,9 +4238,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     </div>
     <div class="sub-panel" id="ad-afi">
       <div id="afiKpiRow" class="kpi-row"></div>
-      <div id="afiByProductTableWrap"></div>
-      <div style="margin-top:16px"><div class="section-title">料率別集計</div></div>
+      <div class="section-title" style="margin-bottom:8px">料率別集計</div>
       <div id="afiByRateTableWrap"></div>
+      <div style="margin-top:16px"><div class="section-title">商品別集計</div></div>
+      <div id="afiByProductTableWrap"></div>
     </div>
   </div>
 </div>
@@ -4222,10 +4251,15 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="panel-title">CRM分析</div>
   <div class="section-box">
     <div class="sub-tabs" id="acqSubTabs">
-      <div class="sub-tab active" data-subtab="acq-line">LINE</div>
-      <div class="sub-tab" data-subtab="acq-mail">メルマガ</div>
+      <div class="sub-tab active" data-subtab="acq-mail">メルマガ</div>
+      <div class="sub-tab" data-subtab="acq-line">LINE</div>
     </div>
-    <div class="sub-panel active" id="acq-line">
+    <div class="sub-panel active" id="acq-mail">
+      <div id="mailKpiRow" class="kpi-row"></div>
+      <div class="sub-title" style="margin-top:20px">配信分析</div>
+      <div id="mailTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="acq-line">
       <div class="sub-title">全体分析</div>
       <div id="lineKpiRow" class="kpi-row"></div>
       <div class="grid-2">
@@ -4234,11 +4268,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       </div>
       <div class="sub-title" style="margin-top:20px">メッセージ別分析</div>
       <div id="lineTableWrap"></div>
-    </div>
-    <div class="sub-panel" id="acq-mail">
-      <div id="mailKpiRow" class="kpi-row"></div>
-      <div class="sub-title" style="margin-top:20px">配信分析</div>
-      <div id="mailTableWrap"></div>
     </div>
   </div>
 </div>
@@ -4280,11 +4309,11 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       </div>
       <div class="grid-2">
         <div class="section-box">
-          <div class="section-title">リピート購入商品ランキング</div>
+          <div class="section-title">リピート購入商品ランキング<span style="font-size:11px;font-weight:400;color:#888;margin-left:8px">（累計）</span></div>
           <div id="repeatItemTableWrap"></div>
         </div>
         <div class="section-box">
-          <div class="section-title">入口商品別 F2転換率</div>
+          <div class="section-title">入口商品別 F2転換率<span style="font-size:11px;font-weight:400;color:#888;margin-left:8px">（累計）</span></div>
           <div id="entryItemF2TableWrap"></div>
         </div>
       </div>
@@ -4587,7 +4616,7 @@ function renderSalesTab() {
   const totalSales = sumField(data, 'sales');
   const totalOrders = sumField(data, 'orders');
   const totalAccess = sumField(data, 'access');
-  const avgCvr = avgField(data, 'cvr');
+  const avgCvr = totalAccess > 0 ? (totalOrders / totalAccess * 100) : 0;
   const avgPrice = totalOrders > 0 ? totalSales / totalOrders : 0;
   const totalNew = sumField(data, 'newBuyers');
   const totalRepeat = sumField(data, 'repeatBuyers');
@@ -4595,7 +4624,7 @@ function renderSalesTab() {
   const cTotalSales = cmpData.length ? sumField(cmpData, 'sales') : null;
   const cTotalOrders = cmpData.length ? sumField(cmpData, 'orders') : null;
   const cTotalAccess = cmpData.length ? sumField(cmpData, 'access') : null;
-  const cAvgCvr = cmpData.length ? avgField(cmpData, 'cvr') : null;
+  const cAvgCvr = cmpData.length && sumField(cmpData, 'access') > 0 ? (sumField(cmpData, 'orders') / sumField(cmpData, 'access') * 100) : null;
   const cAvgPrice = cmpData.length && sumField(cmpData, 'orders') > 0 ? sumField(cmpData, 'sales') / sumField(cmpData, 'orders') : null;
 
   const cards = [
@@ -5055,29 +5084,30 @@ function renderAdsTab() {
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
   ], rppItems, { limit: 50 });
 
-  // RPP KW table - 商品ごとにKWを合計して表示
-  const rppKwByProduct = {};
+  // RPP KW table - キーワードごとに集計
+  const rppKwAgg = {};
   rppKwData.forEach(r => {
-    const k = r.name || '不明';
-    if (!rppKwByProduct[k]) rppKwByProduct[k] = { name: k, spend: 0, sales: 0, clicks: 0, orders: 0 };
-    rppKwByProduct[k].spend += r.spend; rppKwByProduct[k].sales += r.sales;
-    rppKwByProduct[k].clicks += r.clicks; rppKwByProduct[k].orders += r.orders;
+    const k = r.kw || '不明';
+    if (!rppKwAgg[k]) rppKwAgg[k] = { kw: k, name: r.name || '', spend: 0, sales: 0, clicks: 0, orders: 0 };
+    rppKwAgg[k].spend += r.spend; rppKwAgg[k].sales += r.sales;
+    rppKwAgg[k].clicks += r.clicks; rppKwAgg[k].orders += r.orders;
   });
-  const rppKwProducts = Object.values(rppKwByProduct).map(r => ({
+  const rppKwRows = Object.values(rppKwAgg).map(r => ({
     ...r,
     roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
     cvr: r.clicks > 0 ? Math.round(r.orders / r.clicks * 10000) / 100 : 0,
     cpc: r.clicks > 0 ? Math.round(r.spend / r.clicks) : 0,
-  })).sort((a, b) => b.sales - a.sales);
+  })).sort((a, b) => b.spend - a.spend);
   buildTable('rppKwTableWrap', [
-    { key: 'name', label: '商品', fmt: v => safe(String(v).substring(0, 50)) },
+    { key: 'kw', label: 'キーワード', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'name', label: '商品', fmt: v => safe(String(v).substring(0, 30)) },
     { key: 'spend', label: '費用', fmt: v => yen(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
     { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
-  ], rppKwProducts, { limit: 50 });
+  ], rppKwRows, { limit: 80 });
 
   // TDA
   const tdaTotalOrders = sumField(tdaData, 'orders');
@@ -5302,7 +5332,7 @@ function renderAcqTab() {
   const mailTotalSales = sumField(mailData, 'sales');
   const mailTotalOrders = sumField(mailData, 'orders');
   document.getElementById('mailKpiRow').innerHTML = [
-    { label: '配信回数', value: comma(mailData.length) + '回' },
+    { label: '配信月数', value: comma(mailData.length) + '月' },
     { label: '配信数', value: comma(mailTotalSent) },
     { label: '開封数', value: comma(mailTotalOpened) },
     { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
@@ -5312,14 +5342,14 @@ function renderAcqTab() {
 
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('mailTableWrap', [
-    { key: 'date', label: '配信日時', fmt: v => safe(String(v).substring(0, 16)) },
-    { key: 'subject', label: '件名', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'date', label: '年月', fmt: v => { const ym = String(v); return D.monthLabels[ym] || ym; } },
+    { key: 'subject', label: 'メール種別', fmt: v => safe(String(v).substring(0, 40)) },
     { key: 'sent', label: '配信数', fmt: v => comma(v) },
     { key: 'opened', label: '開封数', fmt: v => comma(v) },
     { key: 'openRate', label: '開封率', fmt: v => safe(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
-    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'orders', label: '転換数', fmt: v => comma(v) },
   ], mailSorted, { limit: 50 });
 }
 
@@ -5377,19 +5407,33 @@ function renderRepeatTab() {
     { label: 'リピート率', value: totalCust > 0 ? pct(repeatersCnt / totalCust * 100) : '0%' },
   ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
 
-  // Monthly NR
-  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m = s.match(/^(\\d{4})-(\\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') : ''; };
+  // Monthly NR - all_rawの新規/リピート購入者数を使用（order_rawが1ヶ月のみの場合でも正確）
   const monthlyNR = {};
-  filtered.forEach(r => {
-    if (!r.e || !r.d) return;
-    const ym = toYmClient(r.d);
-    if (!ym) return;
-    if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
-    const firstYM = toYmClient(custFirst[r.e]);
-    if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
-    else monthlyNR[ym].repC.add(r.e);
-  });
-  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newC.size, repeatCust: v.repC.size })).sort((a, b) => a.month.localeCompare(b.month));
+  if (!filterItem) {
+    // 商品フィルタなし → all_rawの新規/リピート購入者数を月別集計
+    D.months.forEach(ym => {
+      const mData = D.allByMonth[ym] || [];
+      const newB = mData.reduce((s, r) => s + (r.newBuyers || 0), 0);
+      const repB = mData.reduce((s, r) => s + (r.repeatBuyers || 0), 0);
+      if (newB > 0 || repB > 0) monthlyNR[ym] = { newCust: newB, repeatCust: repB };
+    });
+  } else {
+    // 商品フィルタあり → order_rawから再計算
+    const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m2 = s.match(/^(\\d{4})-(\\d{1,2})/); return m2 ? m2[1] + '-' + m2[2].padStart(2, '0') : ''; };
+    filtered.forEach(r => {
+      if (!r.e || !r.d) return;
+      const ym = toYmClient(r.d);
+      if (!ym) return;
+      if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
+      const firstYM = toYmClient(custFirst[r.e]);
+      if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
+      else monthlyNR[ym].repC.add(r.e);
+    });
+    Object.keys(monthlyNR).forEach(ym => {
+      monthlyNR[ym] = { newCust: monthlyNR[ym].newC.size, repeatCust: monthlyNR[ym].repC.size };
+    });
+  }
+  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newCust, repeatCust: v.repeatCust })).sort((a, b) => a.month.localeCompare(b.month));
 
   destroyChart('chartMonthlyNR');
   destroyChart('chartRepeatRateTrend');
