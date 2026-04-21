@@ -4752,7 +4752,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="sub-panel" id="ad-afi">
       <div id="afiKpiRow" class="kpi-row"></div>
       <div class="section-title" style="margin-bottom:8px">料率別集計</div>
-      <div id="afiByRateTableWrap"></div>
+      <div class="grid-2">
+        <div id="afiByRateTableWrap"></div>
+        <div class="section-box"><div class="chart-wrap chart-sm"><canvas id="chartAfiRatePie"></canvas></div></div>
+      </div>
       <div style="margin-top:16px"><div class="section-title">商品別集計</div></div>
       <div id="afiByProductTableWrap"></div>
     </div>
@@ -5940,6 +5943,20 @@ function renderAdsTab() {
     { key: 'salesRatio', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
   ], afiRateWithRatio, { limit: 20 });
+
+  // Affiliate rate pie chart
+  destroyChart('chartAfiRatePie');
+  const pieColors = ['#1a3a5c','#e8734a','#f5b041','#2ecc71','#3498db','#9b59b6','#e74c3c','#1abc9c','#34495e','#f39c12'];
+  if (afiRateWithRatio.length > 0) {
+    chartInstances['chartAfiRatePie'] = new Chart(document.getElementById('chartAfiRatePie'), {
+      type: 'doughnut',
+      data: {
+        labels: afiRateWithRatio.map(r => r.rate),
+        datasets: [{ data: afiRateWithRatio.map(r => r.sales), backgroundColor: afiRateWithRatio.map((_, i) => pieColors[i % pieColors.length]) }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: function(ctx) { return ctx.label + ': ' + yen(ctx.raw) + ' (' + (afiRateTotalSales > 0 ? (ctx.raw / afiRateTotalSales * 100).toFixed(1) : 0) + '%)'; } } } } }
+    });
+  }
 }
 
 function renderAcqTab() {
