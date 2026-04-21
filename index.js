@@ -4788,40 +4788,18 @@ function renderSalesTab() {
   renderProductMonthly();
 }
 
-// 商品名→管理番号のクロスマッチマップ（allItemとrppItemの管理番号体系が異なるため）
-const productCrossMap = {}; // rppManageNum → allItemManageNum
-function buildProductCrossMap() {
-  // allItemByMonthの商品名→manageNumマップ
-  const allItemNameMap = {};
-  D.months.forEach(ym => {
-    (D.allItemByMonth[ym] || []).forEach(r => {
-      if (r.name && r.manageNum) allItemNameMap[r.name] = r.manageNum;
-    });
-  });
-  // rppItemByMonthの商品名→manageNumマップ → allItem側のmanageNumとクロス
-  D.months.forEach(ym => {
-    (D.rppItemByMonth[ym] || []).forEach(r => {
-      if (r.manageNum && r.name && allItemNameMap[r.name]) {
-        productCrossMap[r.manageNum] = allItemNameMap[r.name];
-      }
-    });
-  });
-  console.log('[productCrossMap] ' + Object.keys(productCrossMap).length + ' cross-mappings');
-}
-
 function initProductSelector() {
   const pSel = document.getElementById('productItemSelect');
   if (!pSel || pSel.options.length > 1) return;
-  buildProductCrossMap();
-  // allItemByMonthの商品を主軸にする
+  // 商品管理番号で直接マッチ（allItemとrppItemの両方から収集）
   const productMap = {};
   D.months.forEach(ym => {
     (D.allItemByMonth[ym] || []).forEach(r => {
-      const key = r.manageNum || r.name;
-      if (key && !productMap[key]) productMap[key] = r.name || r.manageNum || key;
+      const key = r.manageNum;
+      if (key && !productMap[key]) productMap[key] = r.name || key;
     });
     (D.rppItemByMonth[ym] || []).forEach(r => {
-      const key = r.manageNum || r.name;
+      const key = r.manageNum;
       if (key && !productMap[key]) productMap[key] = r.name || key;
     });
   });
@@ -4848,11 +4826,8 @@ function renderProductMonthly() {
     return;
   }
 
-  // クロスマッチ: selected がRPP側manageNumなら allItem側manageNumも検索対象に
-  const crossMn = productCrossMap[selected] || '';
-  // 逆引き: selected がallItem側manageNumなら RPP側manageNumも検索対象に
-  const reverseCrossMn = Object.entries(productCrossMap).find(([k, v]) => v === selected)?.[0] || '';
-  const matchItem = (r) => r.manageNum === selected || r.name === selected || (crossMn && r.manageNum === crossMn) || (reverseCrossMn && r.manageNum === reverseCrossMn);
+  // 商品管理番号で直接マッチ
+  const matchItem = (r) => r.manageNum === selected;
 
   const pDateFrom = document.getElementById('productDateFrom').value;
   const pDateTo = document.getElementById('productDateTo').value;
@@ -4991,13 +4966,13 @@ function getAllMonthData(dataByMonth) {
 }
 function renderAdsTab() {
   const rppData = getMonthData(D.rppByMonth, currentMonth);
-  // 月次集計シート（TDA/楽天広告/CPA）は日付フィルタ不適用 - 全データ表示
-  const tdaData = getAllMonthData(D.tdaByMonth);
-  const adData = getAllMonthData(D.adByMonth);
-  const cpaData = getAllMonthData(D.cpaByMonth || {});
+  // 月次集計シート: currentMonthでフィルタ（'all'なら全期間）
+  const tdaData = D.tdaByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.tdaByMonth) : []);
+  const adData = D.adByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.adByMonth) : []);
+  const cpaData = (D.cpaByMonth || {})[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.cpaByMonth || {}) : []);
   const rppItemData = getMonthData(D.rppItemByMonth, currentMonth);
-  // rpp_kw_rawも月次データのため全期間表示
-  const rppKwData = getAllMonthData(D.rppKwByMonth);
+  // rpp_kw_raw: 月フィルター
+  const rppKwData = D.rppKwByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.rppKwByMonth) : []);
 
   const cmpYm = getCompareMonth(currentMonth, compareMode);
 
@@ -5377,20 +5352,21 @@ function renderAcqTab() {
     { key: 'salesPerSend', label: '売上/通', fmt: v => yen(Math.round(v * 10) / 10) },
   ], lineForTable, { limit: 50 });
 
-  // Mail KPIs + table
-  const mailData = D.mailParsed || [];
+  // Mail KPIs + table - 月フィルター適用
+  const allMailData = D.mailParsed || [];
+  const mailData = currentMonth === 'all' ? allMailData : allMailData.filter(r => r.date === currentMonth);
   const mailTotalSent = sumField(mailData, 'sent');
   const mailTotalOpened = sumField(mailData, 'opened');
   const mailTotalClicks = sumField(mailData, 'clicks');
   const mailTotalSales = sumField(mailData, 'sales');
   const mailTotalOrders = sumField(mailData, 'orders');
   document.getElementById('mailKpiRow').innerHTML = [
-    { label: '配信月数', value: comma(mailData.length) + '月' },
     { label: '配信数', value: comma(mailTotalSent) },
     { label: '開封数', value: comma(mailTotalOpened) },
     { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
     { label: 'クリック数', value: comma(mailTotalClicks) },
     { label: '売上', value: yen(mailTotalSales) },
+    { label: '転換数', value: comma(mailTotalOrders) },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -5460,33 +5436,25 @@ function renderRepeatTab() {
     { label: 'リピート率', value: totalCust > 0 ? pct(repeatersCnt / totalCust * 100) : '0%' },
   ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
 
-  // Monthly NR - all_rawの新規/リピート購入者数を使用（order_rawが1ヶ月のみの場合でも正確）
+  // Monthly NR - order_rawから算出
+  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m2 = s.match(/^(\\d{4})-(\\d{1,2})/); return m2 ? m2[1] + '-' + m2[2].padStart(2, '0') : ''; };
+  // 全order_rawから顧客の初回購入月を算出（フィルタ前のデータで計算）
+  const allCustFirst = {};
+  (D.orderItems || []).forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!allCustFirst[r.e] || r.d < allCustFirst[r.e]) allCustFirst[r.e] = r.d;
+  });
   const monthlyNR = {};
-  if (!filterItem) {
-    // 商品フィルタなし → all_rawの新規/リピート購入者数を月別集計
-    D.months.forEach(ym => {
-      const mData = D.allByMonth[ym] || [];
-      const newB = mData.reduce((s, r) => s + (r.newBuyers || 0), 0);
-      const repB = mData.reduce((s, r) => s + (r.repeatBuyers || 0), 0);
-      if (newB > 0 || repB > 0) monthlyNR[ym] = { newCust: newB, repeatCust: repB };
-    });
-  } else {
-    // 商品フィルタあり → order_rawから再計算
-    const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m2 = s.match(/^(\\d{4})-(\\d{1,2})/); return m2 ? m2[1] + '-' + m2[2].padStart(2, '0') : ''; };
-    filtered.forEach(r => {
-      if (!r.e || !r.d) return;
-      const ym = toYmClient(r.d);
-      if (!ym) return;
-      if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
-      const firstYM = toYmClient(custFirst[r.e]);
-      if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
-      else monthlyNR[ym].repC.add(r.e);
-    });
-    Object.keys(monthlyNR).forEach(ym => {
-      monthlyNR[ym] = { newCust: monthlyNR[ym].newC.size, repeatCust: monthlyNR[ym].repC.size };
-    });
-  }
-  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newCust, repeatCust: v.repeatCust })).sort((a, b) => a.month.localeCompare(b.month));
+  filtered.forEach(r => {
+    if (!r.e || !r.d) return;
+    const ym = toYmClient(r.d);
+    if (!ym) return;
+    if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
+    const firstYM = toYmClient(allCustFirst[r.e]);
+    if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
+    else monthlyNR[ym].repC.add(r.e);
+  });
+  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newC.size, repeatCust: v.repC.size })).sort((a, b) => a.month.localeCompare(b.month));
 
   destroyChart('chartMonthlyNR');
   destroyChart('chartRepeatRateTrend');
