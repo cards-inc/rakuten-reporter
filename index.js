@@ -3973,6 +3973,7 @@ async function generateDashboardHtml() {
     allItemByMonth[ym].push({
       manageNum: (r['商品管理番号'] || '').trim(),
       name: r['商品名'] || r['商品管理番号'] || '不明',
+      genre: (r['ジャンル'] || '').trim(),
       access: num(aiAccessVal),
       sales: num(aiSalesVal),
       orders: num(aiOrdersVal),
@@ -4259,6 +4260,15 @@ async function generateDashboardHtml() {
   });
   const afiByRateRows = Object.values(afiByRate).sort((a, b) => b.sales - a.sales);
 
+  // ── 楽天イベントカレンダー取得 ──
+  let rakutenEvents = [];
+  try {
+    rakutenEvents = await fetchRakutenEvents();
+    console.log(`Dashboard: ${rakutenEvents.length} Rakuten events fetched`);
+  } catch (e) {
+    console.log(`Dashboard: event fetch error: ${e.message}`);
+  }
+
   // ── Build the master JSON payload ──
   const dashboardData = {
     updatedAt: dateStr,
@@ -4305,6 +4315,7 @@ async function generateDashboardHtml() {
     },
     mailParsed,
     afiByRateRows,
+    rakutenEvents,
   };
 
   const dataJson = JSON.stringify(dashboardData);
@@ -4540,7 +4551,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <img src="../cards_logo.png" alt="CARDS" style="height:28px;filter:brightness(0) invert(1)" onerror="this.style.display='none'">
       <div style="font-size:12px;color:#fff;letter-spacing:1px;font-weight:500">楽天市場アナリティクス</div>
     </div>
-    <div class="header-meta">更新: ${safe(dateStr)}</div>
+    <div class="header-meta">百福堂（ひゃくふくどう）｜更新: ${safe(dateStr)}</div>
   </div>
 </header>
 
@@ -4596,6 +4607,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="section-title">日別売上（RPP経由 / 広告外）</div>
     <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
   </div>
+  <div class="section-box" id="eventCalendarBox" style="display:none">
+    <div class="section-title">楽天イベントカレンダー</div>
+    <div id="eventListWrap"></div>
+  </div>
 </div>
 
 <!-- Tab: 商品別分析 -->
@@ -4618,6 +4633,14 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       </select>
     </div>
     <div id="productMonthlyTableWrap" style="overflow-x:auto"></div>
+  </div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">カテゴリ別実績</div>
+    <div id="categoryTableWrap" style="overflow-x:auto"></div>
+  </div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">カテゴリ別 売上推移</div>
+    <div class="chart-wrap chart-md"><canvas id="chartCategoryTrend"></canvas></div>
   </div>
 </div>
 
@@ -4790,14 +4813,15 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
         </div>
       </div>
       <div class="section-box">
-        <div class="section-title">RFMランク別 顧客一覧</div>
+        <div class="section-title">セグメント別 購入商品比率</div>
         <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
           <span class="filter-label">セグメント</span>
           <select id="rfmSegmentFilter" class="filter-select" style="width:auto;min-width:200px">
             <option value="">全セグメント</option>
           </select>
         </div>
-        <div id="rfmDetailTable"></div>
+        <div id="rfmProductTable"></div>
+        <div class="chart-wrap chart-md" style="margin-top:16px"><canvas id="chartSegmentProduct"></canvas></div>
       </div>
     </div>
     <div class="sub-panel" id="cust-entrance">
@@ -5173,6 +5197,23 @@ function renderSalesTab() {
     const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
     const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
 
+    // イベントアノテーション生成
+    const eventAnnotations = {};
+    const evtColors = ['rgba(255,87,34,0.12)','rgba(76,175,80,0.12)','rgba(156,39,176,0.12)','rgba(3,169,244,0.12)','rgba(255,152,0,0.12)'];
+    (D.rakutenEvents || []).forEach((evt, ei) => {
+      const eStart = evt.startDate ? evt.startDate.replace(/\\//g, '-').substring(0, 10) : '';
+      const eEnd = evt.endDate ? evt.endDate.replace(/\\//g, '-').substring(0, 10) : '';
+      if (!eStart) return;
+      const si = dailyDates.findIndex(d => d >= eStart);
+      const eiIdx = eEnd ? dailyDates.findIndex(d => d > eEnd) : si + 1;
+      if (si < 0) return;
+      eventAnnotations['evt' + ei] = {
+        type: 'box', xMin: si - 0.5, xMax: (eiIdx < 0 ? dailyDates.length : eiIdx) - 0.5,
+        backgroundColor: evtColors[ei % evtColors.length], borderWidth: 0,
+        label: { display: true, content: evt.title.substring(0, 15), position: 'start', font: { size: 9 }, color: '#666' }
+      };
+    });
+
     chartInstances['chartDailyRppSplit'] = new Chart(document.getElementById('chartDailyRppSplit'), {
       type: 'bar',
       data: {
@@ -5187,6 +5228,7 @@ function renderSalesTab() {
         plugins: {
           legend: { position: 'bottom' },
           tooltip: { mode: 'index', callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw), footer: items => '合計: ' + yen(items.reduce((s, i) => s + i.raw, 0)) } },
+          annotation: { annotations: eventAnnotations },
         },
         scales: {
           x: { stacked: true },
@@ -5194,6 +5236,23 @@ function renderSalesTab() {
         }
       }
     });
+  }
+
+  // ── イベントカレンダーリスト ──
+  const evtBox = document.getElementById('eventCalendarBox');
+  const evtWrap = document.getElementById('eventListWrap');
+  if (D.rakutenEvents && D.rakutenEvents.length > 0) {
+    evtBox.style.display = '';
+    const today = new Date().toISOString().substring(0, 10);
+    let evtHtml = '<table class="data-table"><thead><tr><th>イベント名</th><th>期間</th><th>状態</th></tr></thead><tbody>';
+    D.rakutenEvents.forEach(evt => {
+      const s = (evt.startDate || '').substring(0, 10);
+      const e = (evt.endDate || '').substring(0, 10);
+      const status = today < s ? '<span style="color:#1976d2">予定</span>' : (today > e ? '<span style="color:#999">終了</span>' : '<span style="color:#e65100;font-weight:600">開催中</span>');
+      evtHtml += '<tr><td>' + (evt.title || '') + '</td><td style="white-space:nowrap">' + s + ' ～ ' + e + '</td><td>' + status + '</td></tr>';
+    });
+    evtHtml += '</tbody></table>';
+    evtWrap.innerHTML = evtHtml;
   }
 
 }
@@ -5355,6 +5414,98 @@ function renderProductTab() {
 
   // 月別推移テーブル
   renderProductMonthlyTable();
+  // カテゴリ別実績
+  renderCategoryTable();
+}
+
+function renderCategoryTable() {
+  const wrap = document.getElementById('categoryTableWrap');
+  const prodMonth = document.getElementById('monthFilter').value || 'all';
+  const validMonths = D.months.filter(ym => ym >= '2025-10');
+  const targetMonths = prodMonth === 'all' ? validMonths : (validMonths.includes(prodMonth) ? [prodMonth] : []);
+
+  // ジャンル別に集約
+  const catAgg = {};
+  targetMonths.forEach(ym => {
+    (D.allItemByMonth[ym] || []).forEach(r => {
+      const genre = r.genre || '未分類';
+      if (!catAgg[genre]) catAgg[genre] = { genre, sales: 0, orders: 0, access: 0, products: new Set() };
+      catAgg[genre].sales += r.sales || 0;
+      catAgg[genre].orders += r.orders || 0;
+      catAgg[genre].access += r.access || 0;
+      if (r.manageNum) catAgg[genre].products.add(r.manageNum);
+    });
+  });
+
+  const rows = Object.values(catAgg).map(c => ({
+    genre: c.genre, sales: c.sales, orders: c.orders, access: c.access,
+    productCount: c.products.size,
+    cvr: c.access > 0 ? (c.orders / c.access * 100) : 0,
+    unitPrice: c.orders > 0 ? c.sales / c.orders : 0,
+  })).sort((a, b) => b.sales - a.sales);
+
+  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
+
+  if (rows.length === 0) {
+    wrap.innerHTML = '<div class="no-data">カテゴリデータがありません</div>';
+    return;
+  }
+
+  let html = '<table class="data-table" id="categoryTable"><thead><tr>';
+  const cols = ['カテゴリ','商品数','売上','売上構成比','件数','アクセス','転換率','客単価'];
+  cols.forEach(c => html += '<th class="sortable">' + c + '</th>');
+  html += '</tr></thead><tbody>';
+  rows.forEach(r => {
+    const share = totalSales > 0 ? (r.sales / totalSales * 100) : 0;
+    html += '<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + r.genre + '">' + r.genre + '</td>';
+    html += '<td class="num">' + comma(r.productCount) + '</td>';
+    html += '<td class="num">' + yen(r.sales) + '</td>';
+    html += '<td class="num">' + share.toFixed(1) + '%</td>';
+    html += '<td class="num">' + comma(r.orders) + '</td>';
+    html += '<td class="num">' + comma(r.access) + '</td>';
+    html += '<td class="num">' + r.cvr.toFixed(2) + '%</td>';
+    html += '<td class="num">' + yen(Math.round(r.unitPrice)) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+
+  // ソート
+  document.querySelectorAll('#categoryTable th.sortable').forEach((th, ci) => {
+    th.addEventListener('click', function() {
+      sortTable(document.getElementById('categoryTable'), ci, ci >= 1);
+    });
+  });
+
+  // カテゴリ別売上推移チャート
+  renderCategoryTrendChart(rows.slice(0, 8).map(r => r.genre));
+}
+
+function renderCategoryTrendChart(topGenres) {
+  destroyChart('chartCategoryTrend');
+  const validMonths = D.months.filter(ym => ym >= '2025-10').sort();
+  if (validMonths.length === 0 || topGenres.length === 0) return;
+
+  const colors = ['#4285f4','#ea4335','#fbbc04','#34a853','#ff6d01','#46bdc6','#7b1fa2','#c2185b'];
+  const datasets = topGenres.map((genre, gi) => {
+    const data = validMonths.map(ym => {
+      let sales = 0;
+      (D.allItemByMonth[ym] || []).forEach(r => {
+        if ((r.genre || '未分類') === genre) sales += r.sales || 0;
+      });
+      return sales;
+    });
+    return { label: genre.substring(0, 20), data, borderColor: colors[gi % colors.length], backgroundColor: colors[gi % colors.length] + '22', fill: false, tension: 0.3 };
+  });
+
+  chartInstances['chartCategoryTrend'] = new Chart(document.getElementById('chartCategoryTrend'), {
+    type: 'line',
+    data: { labels: validMonths.map(ym => D.monthLabels[ym] || ym), datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } } }
+    }
+  });
 }
 
 function renderProductMonthlyTable() {
@@ -6350,34 +6501,56 @@ function renderRFMTab() {
     });
   }
 
-  // 顧客一覧テーブル
+  // セグメント別 購入商品比率
   const filterSeg = rfmSel.value;
-  const detailRows = (filterSeg ? customers.filter(c => c.segment === filterSeg) : customers)
-    .sort((a, b) => b.rfmScore - a.rfmScore)
-    .slice(0, 100)
-    .map(c => ({
-      email: c.email.substring(0, 3) + '***' + c.email.substring(c.email.indexOf('@')),
-      segment: c.segment,
-      recency: c.recency,
-      frequency: c.frequency,
-      monetary: c.monetary,
-      rScore: c.recencyScore,
-      fScore: c.frequencyScore,
-      mScore: c.monetaryScore,
-      total: c.rfmScore,
-    }));
+  const segCustomerEmails = new Set();
+  customers.forEach(c => {
+    if (!filterSeg || c.segment === filterSeg) segCustomerEmails.add(c.email);
+  });
 
-  buildTable('rfmDetailTable', [
-    { key: 'email', label: '顧客', fmt: v => safe(v) },
-    { key: 'segment', label: 'セグメント', fmt: v => '<span style="color:' + (segColors[v] || '#333') + ';font-weight:600">' + v + '</span>' },
-    { key: 'recency', label: 'R(日前)', fmt: v => comma(v) },
-    { key: 'rScore', label: 'Rスコア', fmt: v => v },
-    { key: 'frequency', label: 'F(回)', fmt: v => comma(v) },
-    { key: 'fScore', label: 'Fスコア', fmt: v => v },
-    { key: 'monetary', label: 'M(円)', fmt: v => yen(v) },
-    { key: 'mScore', label: 'Mスコア', fmt: v => v },
-    { key: 'total', label: '合計', fmt: v => '<strong>' + v + '</strong>' },
-  ], detailRows, { limit: 100 });
+  // セグメント内の商品別集計
+  const segProductAgg = {};
+  let segTotalAmount = 0;
+  D.orderItems.forEach(r => {
+    if (!segCustomerEmails.has(r.e)) return;
+    const item = r.i || '不明';
+    if (!segProductAgg[item]) segProductAgg[item] = { item, count: 0, amount: 0 };
+    segProductAgg[item].count += 1;
+    segProductAgg[item].amount += (r.p || 0);
+    segTotalAmount += (r.p || 0);
+  });
+
+  const segProductRows = Object.values(segProductAgg).sort((a, b) => b.amount - a.amount).slice(0, 30);
+  const segProductLabel = filterSeg || '全セグメント';
+
+  buildTable('rfmProductTable', [
+    { key: 'item', label: '商品', fmt: v => { const name = D.masterProducts[v] || v; return '<span title="' + safe(v) + '">' + safe(name.substring(0, 30)) + '</span>'; } },
+    { key: 'count', label: '購入回数', fmt: v => comma(v) },
+    { key: 'amount', label: '売上', fmt: v => yen(v) },
+    { key: 'pct', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
+  ], segProductRows.map(r => ({ ...r, pct: segTotalAmount > 0 ? (r.amount / segTotalAmount * 100) : 0 })));
+
+  // セグメント別商品円グラフ
+  destroyChart('chartSegmentProduct');
+  const topN = segProductRows.slice(0, 8);
+  const othersAmount = segTotalAmount - topN.reduce((s, r) => s + r.amount, 0);
+  const pieLabels = topN.map(r => (D.masterProducts[r.item] || r.item).substring(0, 15));
+  const pieData = topN.map(r => r.amount);
+  if (othersAmount > 0) { pieLabels.push('その他'); pieData.push(othersAmount); }
+  const pieColors = ['#4285f4','#ea4335','#fbbc04','#34a853','#ff6d01','#46bdc6','#7b1fa2','#c2185b','#999'];
+
+  chartInstances['chartSegmentProduct'] = new Chart(document.getElementById('chartSegmentProduct'), {
+    type: 'doughnut',
+    data: { labels: pieLabels, datasets: [{ data: pieData, backgroundColor: pieColors }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        title: { display: true, text: segProductLabel + ' - 商品別売上構成' },
+        tooltip: { callbacks: { label: ctx => ctx.label + ': ' + yen(ctx.raw) + ' (' + (ctx.raw / segTotalAmount * 100).toFixed(1) + '%)' } }
+      }
+    }
+  });
 }
 
 // ── エントランス分析 ──
