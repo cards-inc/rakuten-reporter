@@ -4771,12 +4771,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <!-- Tab 1: 売上サマリ -->
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
-  <div id="salesCards" class="cards-grid"></div>
-  <div id="forecastPanel" class="section-box" style="display:none;margin-bottom:16px">
-    <div class="section-title">売上着地予測（マーケ予測ベース）</div>
-    <div id="forecastCards" class="cards-grid"></div>
-    <div id="forecastTable" style="overflow-x:auto;margin-top:8px"></div>
-  </div>
+  <div id="salesAndForecast" class="cards-grid"></div>
   <div class="grid-2" style="grid-template-columns:2fr 1fr">
     <div class="section-box">
       <div class="section-title">売上KPIツリー</div>
@@ -5266,70 +5261,32 @@ function renderSalesTab() {
     { label: '転換率', value: pct(avgCvr), change: cAvgCvr !== null ? calcChange(avgCvr, cAvgCvr) : null },
     { label: '客単価', value: yen(Math.round(avgPrice)), change: calcChange(avgPrice, cAvgPrice) },
   ];
-  document.getElementById('salesCards').innerHTML = cards.map(c =>
-    '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
-  ).join('');
-
   // ── 着地予測（マーケ予測ベース） ──
-  const forecastPanel = document.getElementById('forecastPanel');
   const shareForecasts = D.shareForecast || [];
-  // 選択月のシェアデータを抽出
   const ymParts = currentMonth.split('-');
   const sfYm = ymParts[0] + '-' + ymParts[1].padStart(2, '0');
   const sfMonth = shareForecasts.filter(sf => sf.date.substring(0, 7) === sfYm);
   if (sfMonth.length > 0 && data.length > 0) {
-    forecastPanel.style.display = '';
-    // 日別売上マップ
     const dailySalesMap = {};
     data.forEach(r => { const d = String(r.date).split('/').join('-'); dailySalesMap[d] = r.sales || 0; });
-    // 当月シェア合計
     const totalShare = sfMonth.reduce((s, r) => s + r.share, 0);
-    // 実績ある日のシェア合計と売上合計
     let actualShareSum = 0, actualSalesSum = 0, actualDays = 0;
-    const forecastRows = [];
     const today = new Date().toISOString().substring(0, 10);
     sfMonth.forEach(sf => {
-      const ds = sf.date;
-      const actual = dailySalesMap[ds] !== undefined ? dailySalesMap[ds] : null;
-      const isPast = ds <= today && actual !== null;
-      if (isPast) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
-      forecastRows.push({ date: ds, share: sf.share, actual, isPast });
+      const actual = dailySalesMap[sf.date] !== undefined ? dailySalesMap[sf.date] : null;
+      if (sf.date <= today && actual !== null) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
     });
-    // 着地予測 = 実績合計 ÷ 経過日シェア合計 × 月全体シェア合計
     const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
-    const remainShare = totalShare - actualShareSum;
     const remainDays = sfMonth.length - actualDays;
-    const achieveRate = landingForecast > 0 ? (actualSalesSum / landingForecast * 100) : 0;
-
-    const fcCards = [
-      { label: '当月実績', value: yen(actualSalesSum), sub: actualDays + '日経過' },
-      { label: '着地予測', value: yen(landingForecast), sub: '残' + remainDays + '日（シェア' + remainShare.toFixed(1) + '%）' },
-      { label: '達成率', value: achieveRate.toFixed(1) + '%', sub: '予測対比' },
-      { label: '残日平均必要売上', value: remainDays > 0 ? yen(Math.round((landingForecast - actualSalesSum) / remainDays)) : '-', sub: '残日割り' },
-    ];
-    document.getElementById('forecastCards').innerHTML = fcCards.map(c =>
-      '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + (c.sub || '') + '</div></div>'
-    ).join('');
-
-    // 日別テーブル
-    const fCols = [
-      { key: 'date', label: '日付' },
-      { key: 'share', label: 'シェア%', fmt: v => v.toFixed(1) + '%' },
-      { key: 'actual', label: '実績売上', fmt: v => v !== null ? yen(v) : '<span style="color:#bbb">—</span>' },
-      { key: 'cumActual', label: '累計売上', fmt: v => v > 0 ? yen(v) : '' },
-      { key: 'cumShare', label: '累計シェア%', fmt: v => v.toFixed(1) + '%' },
-      { key: 'projLanding', label: '着地予測', fmt: v => v > 0 ? yen(v) : '' },
-    ];
-    let cumActual = 0, cumShare = 0;
-    forecastRows.forEach(r => {
-      if (r.isPast) { cumActual += r.actual; cumShare += r.share; }
-      r.cumActual = cumActual; r.cumShare = cumShare;
-      r.projLanding = cumShare > 0 ? Math.round(cumActual / cumShare * totalShare) : 0;
-    });
-    buildTable('forecastTable', fCols, forecastRows, { limit: 50 });
-  } else {
-    forecastPanel.style.display = 'none';
+    cards.push({ label: '着地予測', value: yen(landingForecast), sub: actualDays + '日経過 / 残' + remainDays + '日' });
   }
+
+  document.getElementById('salesAndForecast').innerHTML = cards.map(c =>
+    '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' +
+    (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') +
+    (c.sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + c.sub + '</div>' : '') +
+    '</div>'
+  ).join('');
 
   // Daily chart
   const sorted = [...data].sort((a, b) => String(a.date).localeCompare(String(b.date)));
