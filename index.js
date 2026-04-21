@@ -3330,14 +3330,16 @@ async function generateDashboardHtml() {
     return dev === 'すべて' || dev === '全て' || dev === 'ALL' || dev === '';
   });
 
-  // Build per-month all_raw data
+  // Build per-month all_raw data (日付で重複排除 - 後の行を優先)
   const allByMonth = {};
+  const allDateSeen = {};
   allData.forEach(r => {
     const ym = toYM(r['日付']);
     if (!ym) return;
+    const dateKey = toDateStr(r['日付']);
     if (!allByMonth[ym]) allByMonth[ym] = [];
-    allByMonth[ym].push({
-      date: toDateStr(r['日付']),
+    const row = {
+      date: dateKey,
       sales: num(r['売上金額']),
       orders: num(r['売上件数']),
       access: num(r['アクセス人数']),
@@ -3349,22 +3351,37 @@ async function generateDashboardHtml() {
       couponRakuten: num(r['クーポン値引額（楽天）']),
       benchmark: num(r['月商別平均値（月商100万～999万） 売上金額'] || r[allRaw.headers.find(h => h && h.includes('月商別平均')) || '__none__']),
       subgenreAvg: num(r['サブジャンルTOP10平均 売上金額'] || r[allRaw.headers.find(h => h && h.includes('サブジャンルTOP10')) || '__none__']),
-    });
+    };
+    if (dateKey && allDateSeen[dateKey] !== undefined) {
+      // 重複→上書き（後の行が最新データ）
+      allByMonth[ym][allDateSeen[dateKey]] = row;
+    } else {
+      allDateSeen[dateKey] = allByMonth[ym].length;
+      allByMonth[ym].push(row);
+    }
   });
 
-  // RPP all data by month
+  // RPP all data by month (日付で重複排除)
   const rppByMonth = {};
+  const rppDateSeen = {};
   rppAllRaw.data.forEach(r => {
     const ym = toYM(r['日付']);
     if (!ym) return;
     if (!rppByMonth[ym]) rppByMonth[ym] = [];
-    rppByMonth[ym].push({
-      date: toDateStr(r['日付']),
+    const dateKey = toDateStr(r['日付']);
+    const row = {
+      date: dateKey,
       spend: num(r[rppSpendKey]),
       sales: num(r[rppSalesKey]),
       clicks: num(r[rppClicksKey]),
       orders: num(r[rppOrdersKey]),
-    });
+    };
+    if (dateKey && rppDateSeen[dateKey] !== undefined) {
+      rppByMonth[ym][rppDateSeen[dateKey]] = row;
+    } else {
+      rppDateSeen[dateKey] = rppByMonth[ym].length;
+      rppByMonth[ym].push(row);
+    }
   });
 
   // RPP item data by month
@@ -4234,6 +4251,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="sub-tab active" data-subtab="cust-repeat">リピート</div>
       <div class="sub-tab" data-subtab="cust-basket">バスケット</div>
       <div class="sub-tab" data-subtab="cust-ltv">LTV</div>
+      <div class="sub-tab" data-subtab="cust-rfm">RFM</div>
+      <div class="sub-tab" data-subtab="cust-entrance">エントランス</div>
+      <div class="sub-tab" data-subtab="cust-timing">タイミング</div>
     </div>
     <div class="sub-panel active" id="cust-repeat">
       <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
@@ -4315,6 +4335,70 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="section-box">
         <div class="section-title">購入回数別 累計金額</div>
         <div id="ltvCountPriceTable"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-rfm">
+      <div id="rfmCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">RFMセグメント分布</div>
+        <div class="grid-2">
+          <div class="chart-wrap" style="height:350px"><canvas id="chartRfmHeatmap"></canvas></div>
+          <div id="rfmSegmentTable"></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">RFMランク別 顧客一覧</div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
+          <span class="filter-label">セグメント</span>
+          <select id="rfmSegmentFilter" class="filter-select" style="width:auto;min-width:200px">
+            <option value="">全セグメント</option>
+          </select>
+        </div>
+        <div id="rfmDetailTable"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-entrance">
+      <div id="entranceCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">入口商品別 F2転換・LTV</div>
+        <div id="entranceItemTable"></div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">入口商品別 F2転換率</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartEntranceF2"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">入口商品別 平均LTV</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartEntranceLTV"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">2回目購入商品（入口商品別）</div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
+          <span class="filter-label">入口商品</span>
+          <select id="entranceItemFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <div id="entrance2ndTable"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-timing">
+      <div id="timingCards" class="cards-grid"></div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">初回→2回目購入 経過日数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartF2Days"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">曜日別 注文数</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartDayOfWeek"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">月別 注文数推移</div>
+        <div class="chart-wrap" style="height:280px"><canvas id="chartMonthlyOrders"></canvas></div>
       </div>
     </div>
   </div>
@@ -4699,7 +4783,7 @@ function initProductSelector() {
   Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = name !== key ? name + ' (' + key + ')' : name;
+    opt.textContent = key + (name !== key ? ' - ' + String(name).substring(0, 30) : '');
     pSel.appendChild(opt);
   });
   console.log('[initProductSelector] ' + pSel.options.length + ' products loaded');
@@ -5652,6 +5736,373 @@ function renderCoProducts() {
   ], coData, { limit: 20 });
 }
 
+// ── RFM分析 ──
+function renderRFMTab() {
+  if (!D.hasOrders || !D.orderItems || D.orderItems.length === 0) {
+    document.getElementById('rfmCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+
+  const now = new Date();
+  const oi = D.orderItems;
+
+  // 顧客ごとにR/F/M算出
+  const custData = {};
+  oi.forEach(r => {
+    if (!r.e) return;
+    if (!custData[r.e]) custData[r.e] = { orders: new Set(), totalSpend: 0, lastDate: '' };
+    if (r.n) custData[r.e].orders.add(r.n);
+    custData[r.e].totalSpend += (r.p || 0);
+    const d = String(r.d || '').replace(/\\//g, '-').substring(0, 10);
+    if (d > custData[r.e].lastDate) custData[r.e].lastDate = d;
+  });
+
+  const customers = Object.entries(custData).map(([email, d]) => {
+    const lastD = d.lastDate ? new Date(d.lastDate + 'T00:00:00') : now;
+    const recencyDays = Math.max(0, Math.floor((now - lastD) / 86400000));
+    return { email, recency: recencyDays, frequency: d.orders.size || 1, monetary: d.totalSpend };
+  });
+
+  if (customers.length === 0) {
+    document.getElementById('rfmCards').innerHTML = '<div class="no-data">顧客データなし</div>';
+    return;
+  }
+
+  // 5段階スコアリング（均等分割）
+  function assignScore(arr, key, reverse) {
+    const sorted = [...arr].sort((a, b) => reverse ? b[key] - a[key] : a[key] - b[key]);
+    const n = sorted.length;
+    sorted.forEach((item, i) => {
+      item[key + 'Score'] = Math.min(5, Math.floor(i / n * 5) + 1);
+    });
+  }
+  assignScore(customers, 'recency', true);  // 最近ほど高スコア
+  assignScore(customers, 'frequency', false); // 頻度高いほど高スコア
+  assignScore(customers, 'monetary', false);  // 金額高いほど高スコア
+
+  // セグメント分類
+  function getSegment(r, f, m) {
+    const avg = (r + f + m) / 3;
+    if (r >= 4 && f >= 4 && m >= 4) return '優良顧客';
+    if (r >= 4 && f >= 3) return 'ロイヤル候補';
+    if (r >= 4 && f <= 2) return '新規顧客';
+    if (r <= 2 && f >= 3) return '離反リスク';
+    if (r <= 2 && f <= 2 && m >= 3) return '休眠（高額）';
+    if (r <= 2) return '離反・休眠';
+    if (avg >= 3.5) return '安定顧客';
+    return '育成対象';
+  }
+
+  customers.forEach(c => {
+    c.segment = getSegment(c.recencyScore, c.frequencyScore, c.monetaryScore);
+    c.rfmScore = c.recencyScore + c.frequencyScore + c.monetaryScore;
+  });
+
+  // カード
+  const segments = {};
+  customers.forEach(c => { segments[c.segment] = (segments[c.segment] || 0) + 1; });
+  const topSegment = Object.entries(segments).sort((a, b) => b[1] - a[1])[0];
+  const avgRFM = customers.reduce((s, c) => s + c.rfmScore, 0) / customers.length;
+
+  document.getElementById('rfmCards').innerHTML = [
+    { label: '分析対象顧客数', value: comma(customers.length) },
+    { label: '平均RFMスコア', value: avgRFM.toFixed(1) + ' / 15' },
+    { label: '優良顧客数', value: comma(segments['優良顧客'] || 0) },
+    { label: '離反リスク', value: comma((segments['離反リスク'] || 0) + (segments['離反・休眠'] || 0)) },
+    { label: '最多セグメント', value: topSegment ? topSegment[0] : '-' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  // セグメント分布テーブル
+  const segOrder = ['優良顧客', 'ロイヤル候補', '安定顧客', '新規顧客', '育成対象', '離反リスク', '休眠（高額）', '離反・休眠'];
+  const segColors = { '優良顧客': '#0d904f', 'ロイヤル候補': '#1a73e8', '安定顧客': '#5b9bd5', '新規顧客': '#34a853', '育成対象': '#f9ab00', '離反リスク': '#e53935', '休眠（高額）': '#ff6d00', '離反・休眠': '#999' };
+  const segRows = segOrder.filter(s => segments[s]).map(s => {
+    const custs = customers.filter(c => c.segment === s);
+    const avgM = custs.reduce((sum, c) => sum + c.monetary, 0) / custs.length;
+    const avgF = custs.reduce((sum, c) => sum + c.frequency, 0) / custs.length;
+    const avgR = custs.reduce((sum, c) => sum + c.recency, 0) / custs.length;
+    return { segment: s, count: custs.length, pct: (custs.length / customers.length * 100), avgMonetary: Math.round(avgM), avgFrequency: avgF, avgRecency: Math.round(avgR) };
+  });
+
+  buildTable('rfmSegmentTable', [
+    { key: 'segment', label: 'セグメント', fmt: (v) => '<span style="color:' + (segColors[v] || '#333') + ';font-weight:600">' + v + '</span>' },
+    { key: 'count', label: '顧客数', fmt: v => comma(v) },
+    { key: 'pct', label: '構成比', fmt: v => v.toFixed(1) + '%' },
+    { key: 'avgRecency', label: '平均R(日)', fmt: v => comma(v) },
+    { key: 'avgFrequency', label: '平均F(回)', fmt: v => v.toFixed(1) },
+    { key: 'avgMonetary', label: '平均M(円)', fmt: v => yen(v) },
+  ], segRows);
+
+  // RFスコアヒートマップ（棒チャートで代用）
+  destroyChart('chartRfmHeatmap');
+  const segChartData = segRows.map(r => ({ label: r.segment, value: r.count }));
+  chartInstances['chartRfmHeatmap'] = new Chart(document.getElementById('chartRfmHeatmap'), {
+    type: 'bar',
+    data: {
+      labels: segChartData.map(r => r.label),
+      datasets: [{ label: '顧客数', data: segChartData.map(r => r.value), backgroundColor: segChartData.map(r => segColors[r.label] || '#999') }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => comma(ctx.raw) + '人' } } },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+
+  // セグメントフィルタ
+  const rfmSel = document.getElementById('rfmSegmentFilter');
+  if (rfmSel.options.length <= 1) {
+    segOrder.filter(s => segments[s]).forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s + ' (' + segments[s] + ')';
+      rfmSel.appendChild(opt);
+    });
+  }
+
+  // 顧客一覧テーブル
+  const filterSeg = rfmSel.value;
+  const detailRows = (filterSeg ? customers.filter(c => c.segment === filterSeg) : customers)
+    .sort((a, b) => b.rfmScore - a.rfmScore)
+    .slice(0, 100)
+    .map(c => ({
+      email: c.email.substring(0, 3) + '***' + c.email.substring(c.email.indexOf('@')),
+      segment: c.segment,
+      recency: c.recency,
+      frequency: c.frequency,
+      monetary: c.monetary,
+      rScore: c.recencyScore,
+      fScore: c.frequencyScore,
+      mScore: c.monetaryScore,
+      total: c.rfmScore,
+    }));
+
+  buildTable('rfmDetailTable', [
+    { key: 'email', label: '顧客', fmt: v => safe(v) },
+    { key: 'segment', label: 'セグメント', fmt: v => '<span style="color:' + (segColors[v] || '#333') + ';font-weight:600">' + v + '</span>' },
+    { key: 'recency', label: 'R(日前)', fmt: v => comma(v) },
+    { key: 'rScore', label: 'Rスコア', fmt: v => v },
+    { key: 'frequency', label: 'F(回)', fmt: v => comma(v) },
+    { key: 'fScore', label: 'Fスコア', fmt: v => v },
+    { key: 'monetary', label: 'M(円)', fmt: v => yen(v) },
+    { key: 'mScore', label: 'Mスコア', fmt: v => v },
+    { key: 'total', label: '合計', fmt: v => '<strong>' + v + '</strong>' },
+  ], detailRows, { limit: 100 });
+}
+
+// ── エントランス分析 ──
+function renderEntranceTab() {
+  if (!D.hasOrders || !D.orderItems) {
+    document.getElementById('entranceCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+  const oi = D.orderItems;
+
+  // 顧客ごと注文をソート
+  const custOrders = {};
+  oi.forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+  Object.values(custOrders).forEach(arr => arr.sort((a, b) => String(a.d).localeCompare(String(b.d))));
+
+  // 入口商品別集計
+  const entranceMap = {};
+  Object.entries(custOrders).forEach(([email, orders]) => {
+    const firstItem = orders[0].i || '不明';
+    const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+    const totalSpend = orders.reduce((s, o) => s + (o.p || 0), 0);
+    const isRepeat = orderNums.length >= 2;
+    if (!entranceMap[firstItem]) entranceMap[firstItem] = { item: firstItem, count: 0, repeatCount: 0, totalLTV: 0 };
+    entranceMap[firstItem].count++;
+    if (isRepeat) entranceMap[firstItem].repeatCount++;
+    entranceMap[firstItem].totalLTV += totalSpend;
+  });
+
+  const entranceRows = Object.values(entranceMap)
+    .map(r => ({ ...r, f2Rate: r.count > 0 ? (r.repeatCount / r.count * 100) : 0, avgLTV: r.count > 0 ? Math.round(r.totalLTV / r.count) : 0 }))
+    .sort((a, b) => b.count - a.count);
+
+  const totalEntrance = entranceRows.reduce((s, r) => s + r.count, 0);
+  const totalF2 = entranceRows.reduce((s, r) => s + r.repeatCount, 0);
+  const overallF2Rate = totalEntrance > 0 ? (totalF2 / totalEntrance * 100) : 0;
+  const bestF2Item = [...entranceRows].filter(r => r.count >= 3).sort((a, b) => b.f2Rate - a.f2Rate)[0];
+
+  document.getElementById('entranceCards').innerHTML = [
+    { label: '入口商品種類', value: comma(entranceRows.length) },
+    { label: '全体F2転換率', value: overallF2Rate.toFixed(1) + '%' },
+    { label: 'F2最高商品', value: bestF2Item ? safe(String(bestF2Item.item).substring(0, 20)) : '-' },
+    { label: 'F2最高率', value: bestF2Item ? bestF2Item.f2Rate.toFixed(1) + '%' : '-' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  buildTable('entranceItemTable', [
+    { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 35)) },
+    { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
+    { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
+    { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + v.toFixed(1) + '%</span>' },
+    { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+  ], entranceRows, { limit: 30 });
+
+  // チャート
+  const top10 = entranceRows.filter(r => r.count >= 2).slice(0, 10);
+  destroyChart('chartEntranceF2');
+  if (top10.length > 0) {
+    chartInstances['chartEntranceF2'] = new Chart(document.getElementById('chartEntranceF2'), {
+      type: 'bar', data: {
+        labels: top10.map(r => String(r.item).substring(0, 15)),
+        datasets: [{ label: 'F2転換率', data: top10.map(r => r.f2Rate), backgroundColor: '#1a73e8' }]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw.toFixed(1) + '%' } } }, scales: { x: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
+    });
+  }
+  destroyChart('chartEntranceLTV');
+  if (top10.length > 0) {
+    chartInstances['chartEntranceLTV'] = new Chart(document.getElementById('chartEntranceLTV'), {
+      type: 'bar', data: {
+        labels: top10.map(r => String(r.item).substring(0, 15)),
+        datasets: [{ label: '平均LTV', data: top10.map(r => r.avgLTV), backgroundColor: '#0d904f' }]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => yen(ctx.raw) } } }, scales: { x: { beginAtZero: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } } } }
+    });
+  }
+
+  // 入口商品フィルタ
+  const eSel = document.getElementById('entranceItemFilter');
+  if (eSel.options.length <= 1) {
+    entranceRows.filter(r => r.count >= 2).forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.item; opt.textContent = String(r.item).substring(0, 40) + ' (' + r.count + ')';
+      eSel.appendChild(opt);
+    });
+  }
+
+  // 2回目購入商品
+  const selItem = eSel.value;
+  if (selItem) {
+    const buyersOfItem = Object.entries(custOrders).filter(([_, orders]) => orders[0].i === selItem);
+    const secondMap = {};
+    buyersOfItem.forEach(([_, orders]) => {
+      const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+      if (orderNums.length < 2) return;
+      const secondOrderNum = orderNums[1];
+      const secondItems = orders.filter(o => o.n === secondOrderNum);
+      secondItems.forEach(o => {
+        const item = o.i || '不明';
+        if (!secondMap[item]) secondMap[item] = { item, count: 0 };
+        secondMap[item].count++;
+      });
+    });
+    const secondRows = Object.values(secondMap).sort((a, b) => b.count - a.count);
+    buildTable('entrance2ndTable', [
+      { key: 'item', label: '2回目購入商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'count', label: '件数', fmt: v => comma(v) },
+    ], secondRows, { limit: 20 });
+  } else {
+    document.getElementById('entrance2ndTable').innerHTML = '<div class="no-data">入口商品を選択してください</div>';
+  }
+}
+
+// ── アプローチタイミング分析 ──
+function renderTimingTab() {
+  if (!D.hasOrders || !D.orderItems) {
+    document.getElementById('timingCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+  const oi = D.orderItems;
+
+  // 顧客ごと注文
+  const custOrders = {};
+  oi.forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+
+  // F2経過日数
+  const f2Days = [];
+  Object.values(custOrders).forEach(orders => {
+    orders.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+    const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+    if (orderNums.length < 2) return;
+    const firstDate = orders.find(o => o.n === orderNums[0])?.d;
+    const secondDate = orders.find(o => o.n === orderNums[1])?.d;
+    if (!firstDate || !secondDate) return;
+    const d1 = new Date(String(firstDate).replace(/\\//g, '-').substring(0, 10) + 'T00:00:00');
+    const d2 = new Date(String(secondDate).replace(/\\//g, '-').substring(0, 10) + 'T00:00:00');
+    const days = Math.floor((d2 - d1) / 86400000);
+    if (days >= 0 && days <= 365) f2Days.push(days);
+  });
+
+  // 曜日別注文数
+  const dowNames = ['日', '月', '火', '水', '木', '金', '土'];
+  const dowCounts = [0, 0, 0, 0, 0, 0, 0];
+  const monthlyOrders = {};
+  oi.forEach(r => {
+    const d = String(r.d || '').replace(/\\//g, '-').substring(0, 10);
+    if (!d || d.length < 10) return;
+    const dt = new Date(d + 'T00:00:00');
+    if (!isNaN(dt.getTime())) dowCounts[dt.getDay()]++;
+    const ym = d.substring(0, 7);
+    monthlyOrders[ym] = (monthlyOrders[ym] || 0) + 1;
+  });
+
+  // F2経過日数の統計
+  const avgF2 = f2Days.length > 0 ? Math.round(f2Days.reduce((s, v) => s + v, 0) / f2Days.length) : 0;
+  const medianF2 = f2Days.length > 0 ? f2Days.sort((a, b) => a - b)[Math.floor(f2Days.length / 2)] : 0;
+  const peakDow = dowCounts.indexOf(Math.max(...dowCounts));
+
+  document.getElementById('timingCards').innerHTML = [
+    { label: 'F2平均経過日数', value: avgF2 + '日' },
+    { label: 'F2中央値', value: medianF2 + '日' },
+    { label: 'F2対象者数', value: comma(f2Days.length) },
+    { label: '注文最多曜日', value: dowNames[peakDow] + '曜日' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  // F2経過日数分布チャート
+  destroyChart('chartF2Days');
+  if (f2Days.length > 0) {
+    const buckets = {};
+    f2Days.forEach(d => {
+      let label;
+      if (d <= 7) label = '1週間以内';
+      else if (d <= 14) label = '2週間以内';
+      else if (d <= 30) label = '1ヶ月以内';
+      else if (d <= 60) label = '2ヶ月以内';
+      else if (d <= 90) label = '3ヶ月以内';
+      else if (d <= 180) label = '半年以内';
+      else label = '半年超';
+      buckets[label] = (buckets[label] || 0) + 1;
+    });
+    const bucketOrder = ['1週間以内', '2週間以内', '1ヶ月以内', '2ヶ月以内', '3ヶ月以内', '半年以内', '半年超'];
+    const bucketLabels = bucketOrder.filter(b => buckets[b]);
+    chartInstances['chartF2Days'] = new Chart(document.getElementById('chartF2Days'), {
+      type: 'bar', data: {
+        labels: bucketLabels,
+        datasets: [{ label: '人数', data: bucketLabels.map(b => buckets[b] || 0), backgroundColor: '#1a73e8' }]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => comma(ctx.raw) + '人' } } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+
+  // 曜日別チャート
+  destroyChart('chartDayOfWeek');
+  chartInstances['chartDayOfWeek'] = new Chart(document.getElementById('chartDayOfWeek'), {
+    type: 'bar', data: {
+      labels: dowNames,
+      datasets: [{ label: '注文数', data: dowCounts, backgroundColor: dowCounts.map((_, i) => i === peakDow ? '#e53935' : '#5b9bd5') }]
+    }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  // 月別注文数
+  destroyChart('chartMonthlyOrders');
+  const moSorted = Object.entries(monthlyOrders).sort((a, b) => a[0].localeCompare(b[0]));
+  if (moSorted.length > 0) {
+    chartInstances['chartMonthlyOrders'] = new Chart(document.getElementById('chartMonthlyOrders'), {
+      type: 'line', data: {
+        labels: moSorted.map(([ym]) => D.monthLabels[ym] || ym),
+        datasets: [{ label: '注文数', data: moSorted.map(([_, v]) => v), borderColor: '#1a3a5c', backgroundColor: 'rgba(26,58,92,0.08)', fill: true, tension: 0.3, pointRadius: 3 }]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+}
+
 // ── Render all ──
 function renderAll() {
   renderSalesTab();
@@ -5660,6 +6111,9 @@ function renderAll() {
   renderRepeatTab();
   renderBasketTab();
   renderLTVTab();
+  renderRFMTab();
+  renderEntranceTab();
+  renderTimingTab();
 }
 
 // ── Event handlers ──
@@ -5768,6 +6222,12 @@ document.getElementById('ltvProductFilter').addEventListener('change', renderLTV
 
 // Basket product selector
 document.getElementById('basketProductSelect').addEventListener('change', renderCoProducts);
+
+// RFM segment filter
+document.getElementById('rfmSegmentFilter').addEventListener('change', renderRFMTab);
+
+// Entrance item filter
+document.getElementById('entranceItemFilter').addEventListener('change', renderEntranceTab);
 
 // Initial render
 renderAll();
