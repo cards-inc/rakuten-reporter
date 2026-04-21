@@ -3337,7 +3337,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!allByMonth[ym]) allByMonth[ym] = [];
     allByMonth[ym].push({
-      date: r['日付'] || '',
+      date: toDateStr(r['日付']),
       sales: num(r['売上金額']),
       orders: num(r['売上件数']),
       access: num(r['アクセス人数']),
@@ -3359,7 +3359,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!rppByMonth[ym]) rppByMonth[ym] = [];
     rppByMonth[ym].push({
-      date: r['日付'] || '',
+      date: toDateStr(r['日付']),
       spend: num(r[rppSpendKey]),
       sales: num(r[rppSalesKey]),
       clicks: num(r[rppClicksKey]),
@@ -3391,6 +3391,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!rppKwByMonth[ym]) rppKwByMonth[ym] = [];
     rppKwByMonth[ym].push({
+      date: toDateStr(r['日付']),
       kw: r['キーワード'] || '不明',
       name: r['商品名'] || r['商品管理番号'] || '',
       spend: num(r[rppKwSpendKey]),
@@ -3407,7 +3408,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!tdaByMonth[ym]) tdaByMonth[ym] = [];
     tdaByMonth[ym].push({
-      date: r['日付'] || '',
+      date: toDateStr(r['日付']),
       campaign: r['キャンペーン名'] || r['キャンペーンID'] || '不明',
       spend: num(r[tdaSpendKey]),
       sales: num(r[tdaSalesKey]),
@@ -3426,7 +3427,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!adByMonth[ym]) adByMonth[ym] = [];
     adByMonth[ym].push({
-      date: r['日付'] || '',
+      date: toDateStr(r['日付']),
       product: r['広告商品名'] || '不明',
       type: r['枠種別'] || '',
       device: r['デバイス'] || '',
@@ -3446,7 +3447,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!cpaByMonth[ym]) cpaByMonth[ym] = [];
     cpaByMonth[ym].push({
-      date: r['日付'] || '',
+      date: toDateStr(r['日付']),
       spend: num(r['ご請求額']),
       sales: num(r['効果保証型広告（楽天CPA広告）経由の売上']),
       rate: r['料率'] || '',
@@ -3461,7 +3462,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!lineByMonth[ym]) lineByMonth[ym] = [];
     lineByMonth[ym].push({
-      date: r['配信日時'] || '',
+      date: toDateStr(r['配信日時']),
       title: r['タイトル'] || '',
       type: r['種別'] || '',
       sent: num(r['配信通数']),
@@ -3483,7 +3484,7 @@ async function generateDashboardHtml() {
     if (!ym) return;
     if (!afiByMonth[ym]) afiByMonth[ym] = [];
     afiByMonth[ym].push({
-      date: r['成果発生日時'] || '',
+      date: toDateStr(r['成果発生日時']),
       product: r['商品名'] || r['商品管理番号'] || '',
       manageNum: r['商品管理番号'] || '',
       sales: num(r['売上金額']),
@@ -3777,7 +3778,7 @@ async function generateDashboardHtml() {
     const salesKey = mailRaw.headers.find(h => h && h.includes('売上')) || '売上金額';
     const ordersKey = mailRaw.headers.find(h => h && (h.includes('売上件数') || h.includes('注文数') || h.includes('転換数'))) || '売上件数';
     return {
-      date: r[dateKey] || '',
+      date: toDateStr(r[dateKey]),
       subject: r[subjectKey] || '',
       sent: num(r[sentKey]),
       opened: num(r[openKey]),
@@ -4006,8 +4007,12 @@ thead th {
 }
 thead th:hover { background: #eef0f2; }
 thead th:first-child { text-align: left; }
-thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.4; }
+thead th { cursor: pointer; user-select: none; }
+thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; }
 thead th.sorted .sort-icon { opacity: 1; color: var(--c-primary); }
+thead th.sorted-asc .sort-icon::after { content: '▲'; }
+thead th.sorted-desc .sort-icon::after { content: '▼'; }
+thead th:not(.sorted) .sort-icon::after { content: '⇅'; }
 tbody td {
   padding: 9px 12px; text-align: right; border-bottom: 1px solid #f0f0f0;
   white-space: nowrap; font-variant-numeric: tabular-nums;
@@ -4244,14 +4249,19 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
         </select>
       </div>
       <div id="repeatCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">月別 新規/リピート客数・比率</div>
+        <div class="chart-wrap" style="height:320px"><canvas id="chartMonthlyNR"></canvas></div>
+        <div id="monthlyNRTable" style="margin-top:12px"></div>
+      </div>
       <div class="grid-2">
-        <div class="section-box">
-          <div class="section-title">月別 新規/リピート客数</div>
-          <div class="chart-wrap chart-sm"><canvas id="chartMonthlyNR"></canvas></div>
-        </div>
         <div class="section-box">
           <div class="section-title">購入回数分布</div>
           <div class="chart-wrap chart-sm"><canvas id="chartPurchaseDist"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">月別リピート率推移</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartRepeatRateTrend"></canvas></div>
         </div>
       </div>
       <div class="grid-2">
@@ -4442,7 +4452,7 @@ function buildTable(containerId, columns, rows, opts = {}) {
   const displayed = rows.slice(0, limit);
   let html = '<div class="table-wrap"><table><thead><tr>';
   columns.forEach((c, ci) => {
-    html += '<th data-col="' + ci + '" data-key="' + (c.key||'') + '"><span>' + safe(c.label) + '</span><span class="sort-icon">\\u25B2</span></th>';
+    html += '<th data-col="' + ci + '" data-key="' + (c.key||'') + '"><span>' + safe(c.label) + '</span><span class="sort-icon"></span></th>';
   });
   html += '</tr></thead><tbody>';
   displayed.forEach(row => {
@@ -5317,20 +5327,61 @@ function renderRepeatTab() {
   const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newC.size, repeatCust: v.repC.size })).sort((a, b) => a.month.localeCompare(b.month));
 
   destroyChart('chartMonthlyNR');
+  destroyChart('chartRepeatRateTrend');
   if (nr.length > 0) {
+    const nrLabels = nr.map(r => D.monthLabels[r.month] || r.month);
+    const nrTotals = nr.map(r => r.newCust + r.repeatCust);
+    const nrRepeatRates = nr.map(r => { const t = r.newCust + r.repeatCust; return t > 0 ? Math.round(r.repeatCust / t * 1000) / 10 : 0; });
+
     chartInstances['chartMonthlyNR'] = new Chart(document.getElementById('chartMonthlyNR'), {
       type: 'bar',
       data: {
-        labels: nr.map(r => D.monthLabels[r.month] || r.month),
+        labels: nrLabels,
         datasets: [
-          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c' },
-          { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800' },
+          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c', stack: 'a', yAxisID: 'y' },
+          { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800', stack: 'a', yAxisID: 'y' },
+          { label: 'リピート率', data: nrRepeatRates, type: 'line', borderColor: '#e53935', backgroundColor: 'transparent', pointRadius: 4, pointBackgroundColor: '#e53935', tension: 0.3, yAxisID: 'y1' },
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top' } },
-        scales: { x: { stacked: true }, y: { stacked: true } }
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: { callbacks: { label: ctx => { if (ctx.dataset.label === 'リピート率') return 'リピート率: ' + ctx.raw + '%'; return ctx.dataset.label + ': ' + comma(ctx.raw) + '人'; } } }
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, title: { display: true, text: '顧客数' } },
+          y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: 'リピート率(%)' }, ticks: { callback: v => v + '%' } }
+        }
+      }
+    });
+
+    // 月別テーブル（ソート対応）
+    const nrTableRows = nr.map((r, i) => {
+      const total = r.newCust + r.repeatCust;
+      const rate = total > 0 ? Math.round(r.repeatCust / total * 1000) / 10 : 0;
+      return { month: nrLabels[i], monthSort: r.month, newCust: r.newCust, repeatCust: r.repeatCust, total, rate };
+    });
+    buildTable('monthlyNRTable', [
+      { key: 'month', label: '月', fmt: v => v },
+      { key: 'newCust', label: '新規', fmt: v => comma(v) },
+      { key: 'repeatCust', label: 'リピート', fmt: v => comma(v) },
+      { key: 'total', label: '合計', fmt: v => comma(v) },
+      { key: 'rate', label: 'リピート率', fmt: v => '<span style="font-weight:600">' + v.toFixed(1) + '%</span>' },
+    ], nrTableRows);
+
+    // リピート率推移折れ線チャート
+    chartInstances['chartRepeatRateTrend'] = new Chart(document.getElementById('chartRepeatRateTrend'), {
+      type: 'line',
+      data: {
+        labels: nrLabels,
+        datasets: [{ label: 'リピート率', data: nrRepeatRates, borderColor: '#e53935', backgroundColor: 'rgba(229,57,53,0.1)', fill: true, pointRadius: 4, pointBackgroundColor: '#e53935', tension: 0.3 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => 'リピート率: ' + ctx.raw + '%' } } },
+        scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } }
       }
     });
   }
