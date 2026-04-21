@@ -6035,7 +6035,8 @@ function renderAcqTab() {
 
   // Mail KPIs + table - 月フィルター適用
   const allMailData = D.mailParsed || [];
-  const mailData = allMailData.filter(r => r.date === crmMonth);
+  const mailFiltered = allMailData.filter(r => r.date === crmMonth);
+  const mailData = mailFiltered.length > 0 ? mailFiltered : allMailData;
   const mailTotalSent = sumField(mailData, 'sent');
   const mailTotalOpened = sumField(mailData, 'opened');
   const mailTotalClicks = sumField(mailData, 'clicks');
@@ -6862,6 +6863,9 @@ document.querySelectorAll('.main-tab').forEach(tab => {
       if ([...mf.options].some(o => o.value === curYm)) mf.value = curYm;
       renderProductTab();
     }
+    // CRM・広告タブ切替時に再描画
+    if (this.dataset.tab === 'tab-acq') renderAcqTab();
+    if (this.dataset.tab === 'tab-ads') renderAdsTab();
   });
 });
 
