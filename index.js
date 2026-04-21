@@ -1236,7 +1236,7 @@ functions.http('fetchRppReport', async (req, res) => {
       if (allRawRecords.length > 0) {
         const headers = Object.keys(allRawRecords[0]);
         const rows = allRawRecords.map(r => headers.map(h => r[h] || ''));
-        await writeRawToSheet(headers, rows, 'all_raw');
+        await writeRawToSheet(headers, rows, 'all_raw', ['日付', 'デバイス']);
         additionalResults.push({ sheet: 'all_raw', status: 'ok', rows: allRawRecords.length });
       } else {
         console.log('all_raw: データ取得失敗');
@@ -1999,7 +1999,7 @@ functions.http('fetchRppReport', async (req, res) => {
       if (allMailRecords.length > 0) {
         const headers = Object.keys(allMailRecords[0]);
         const rows = allMailRecords.map(r => headers.map(h => r[h] || ''));
-        await writeRawToSheet(headers, rows, 'mail_raw');
+        await writeRawToSheet(headers, rows, 'mail_raw', ['年月', '区分', 'デバイス', 'メール種別']);
         additionalResults.push({ sheet: 'mail_raw', status: 'ok', rows: allMailRecords.length });
       } else {
         console.log('mail_raw: データなし');
@@ -3106,6 +3106,17 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
 
   if (dataRows.length === 0) return;
 
+  // 日付文字列を正規化（「2026年4月17日」→「2026年04月17日」、「2026/4/17」→「2026/04/17」）
+  const normalizeDate = (val) => {
+    if (!val || typeof val !== 'string') return val || '';
+    // 「YYYY年M月D日」→「YYYY年MM月DD日」
+    return val.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) =>
+      `${y}年${m.padStart(2, '0')}月${d.padStart(2, '0')}日`
+    ).replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) =>
+      `${y}/${m.padStart(2, '0')}/${d.padStart(2, '0')}`
+    );
+  };
+
   // キーカラムのインデックスを特定（指定がなければ先頭4列）
   let keyIndices;
   if (keyColumnNames && keyColumnNames.length > 0) {
@@ -3114,9 +3125,9 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
   }
   const makeKey = (row) => {
     if (keyIndices && keyIndices.length > 0) {
-      return keyIndices.map(i => row[i] || '').join('|');
+      return keyIndices.map(i => normalizeDate(row[i] || '')).join('|');
     }
-    return row.slice(0, 4).join('|');
+    return row.slice(0, 4).map(v => normalizeDate(v || '')).join('|');
   };
 
   // シート存在確認・作成
@@ -3137,6 +3148,9 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
     console.log('シート作成エラー:', e.message);
   }
 
+  // 行のデータ充実度（空でないセル数）
+  const rowScore = (row) => row.filter(v => v !== '' && v !== null && v !== undefined).length;
+
   // 既存データを全列取得
   let existingData = new Map(); // key → row
   try {
@@ -3148,23 +3162,35 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
       if (row.length === 0) continue;
-      existingData.set(makeKey(row), row);
+      const key = makeKey(row);
+      // 同キーが既にある場合、データが多い方を採用
+      if (existingData.has(key)) {
+        if (rowScore(row) > rowScore(existingData.get(key))) {
+          existingData.set(key, row);
+        }
+      } else {
+        existingData.set(key, row);
+      }
     }
   } catch (e) {
     console.log('既存データ取得エラー:', e.message);
   }
 
-  // 新データをマージ（同キーは上書き）
+  // 新データをマージ（同キーは上書き、ただしデータが充実している方を採用）
   let newCount = 0;
   let updateCount = 0;
   for (const row of dataRows) {
     const key = makeKey(row);
     if (existingData.has(key)) {
       updateCount++;
+      // 新データの方がデータ充実度が高い場合のみ上書き
+      if (rowScore(row) >= rowScore(existingData.get(key))) {
+        existingData.set(key, row);
+      }
     } else {
       newCount++;
+      existingData.set(key, row);
     }
-    existingData.set(key, row); // 上書き or 新規追加
   }
 
   // ソート（取得月 or 日付列）
@@ -5255,8 +5281,17 @@ function renderSalesTab() {
       if (sf.date <= today && actual !== null) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
     });
     const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
-    const remainDays = sfMonth.length - actualDays;
-    cards.unshift({ label: '着地予測', value: yen(landingForecast) });
+    // 前月・前年同月の売上と比較
+    const momYm = getCompareMonth(currentMonth, 'mom');
+    const yoyYm = getCompareMonth(currentMonth, 'yoy');
+    const momSales = momYm ? sumField(getMonthData(D.allByMonth, momYm), 'sales') : null;
+    const yoySales = yoyYm ? sumField(getMonthData(D.allByMonth, yoyYm), 'sales') : null;
+    const momChange = momSales ? calcChange(landingForecast, momSales) : null;
+    const yoyChange = yoySales ? calcChange(landingForecast, yoySales) : null;
+    let forecastSub = '';
+    if (momChange !== null) forecastSub += '前月比 ' + (momChange > 0 ? '+' : '') + momChange.toFixed(1) + '%';
+    if (yoyChange !== null) forecastSub += (forecastSub ? '　' : '') + '前年比 ' + (yoyChange > 0 ? '+' : '') + yoyChange.toFixed(1) + '%';
+    cards.unshift({ label: '着地予測', value: yen(landingForecast), sub: forecastSub || undefined });
   }
 
   document.getElementById('salesAndForecast').innerHTML = cards.map(c =>
