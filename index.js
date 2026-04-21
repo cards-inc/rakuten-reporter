@@ -2424,6 +2424,11 @@ async function processRppDownloads(downloads) {
   }
 
   // 各RPPシートをクリア→全データ一括書き込み（writeRawToSheet使用）
+  const rppKeyMap = {
+    'rpp_all_raw': ['日付'],
+    'rpp_item_raw': ['日付', '商品管理番号'],
+    'rpp_kw_raw': ['日付', '商品管理番号', 'キーワード'],
+  };
   for (const [sheetName, records] of Object.entries(rppData)) {
     if (records.length === 0) {
       console.log(`${sheetName}: データなし`);
@@ -2432,7 +2437,7 @@ async function processRppDownloads(downloads) {
     const headers = Object.keys(records[0]);
     const rows = records.map(r => headers.map(h => r[h] || ''));
     console.log(`${sheetName}: ${records.length}件, カラム: ${headers.join(', ')}`);
-    await writeRawToSheet(headers, rows, sheetName);
+    await writeRawToSheet(headers, rows, sheetName, rppKeyMap[sheetName] || undefined);
   }
 
   cleanupDir(DOWNLOAD_DIR);
