@@ -4313,6 +4313,23 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel" id="tab-product">
   <div class="panel-title">商品別実績</div>
   <div id="productTableWrap" style="overflow-x:auto"></div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">月別推移</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <span class="filter-label">指標</span>
+      <select id="productMetricSelect" class="filter-select" style="width:auto">
+        <option value="sales" selected>売上</option>
+        <option value="orders">件数</option>
+        <option value="access">アクセス</option>
+        <option value="cvr">転換率</option>
+        <option value="unitPrice">客単価</option>
+        <option value="rppSpend">RPP費用</option>
+        <option value="rppSales">RPP売上</option>
+        <option value="rppRoas">RPP ROAS</option>
+      </select>
+    </div>
+    <div id="productMonthlyTableWrap" style="overflow-x:auto"></div>
+  </div>
 </div>
 
 <!-- Tab 2: 広告分析 -->
@@ -5042,6 +5059,98 @@ function renderProductTab() {
           tr += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
         });
         tr += '</tr>';
+        tbody.innerHTML += tr;
+      });
+    });
+  });
+
+  // 月別推移テーブル
+  renderProductMonthlyTable();
+}
+
+function renderProductMonthlyTable() {
+  const mWrap = document.getElementById('productMonthlyTableWrap');
+  if (!mWrap) return;
+  const metric = document.getElementById('productMetricSelect')?.value || 'sales';
+
+  const validMonths = D.months.filter(ym => ym >= '2025-10').slice().reverse(); // chronological
+  if (validMonths.length === 0) { mWrap.innerHTML = '<div class="no-data">データなし</div>'; return; }
+
+  // 各月の全商品データ
+  const monthAggs = {};
+  validMonths.forEach(ym => { monthAggs[ym] = aggregateProductMonth([ym]); });
+
+  // 全商品管理番号を収集
+  const allMn = new Set();
+  validMonths.forEach(ym => Object.keys(monthAggs[ym]).forEach(mn => allMn.add(mn)));
+
+  const fmtMap = {
+    sales: v => yen(v), orders: v => comma(v), access: v => comma(v),
+    cvr: v => v.toFixed(2) + '%', unitPrice: v => yen(v),
+    rppSpend: v => yen(v), rppSales: v => yen(v), rppRoas: v => v.toFixed(0) + '%',
+  };
+  const fmt = fmtMap[metric] || (v => String(v));
+
+  const getVal = (agg, mn) => {
+    const p = agg[mn];
+    if (!p) return 0;
+    if (metric === 'cvr') return p.access > 0 ? (p.orders / p.access * 100) : 0;
+    if (metric === 'unitPrice') return p.orders > 0 ? Math.round(p.sales / p.orders) : 0;
+    if (metric === 'rppRoas') return p.rppSpend > 0 ? (p.rppSales / p.rppSpend * 100) : 0;
+    return p[metric] || 0;
+  };
+
+  // 合計で降順ソート
+  const mnList = [...allMn].map(mn => {
+    const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
+    return { mn, total };
+  }).sort((a, b) => b.total - a.total).map(x => x.mn);
+
+  let html = '<table style="font-size:12px;width:100%"><thead><tr>';
+  html += '<th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1;cursor:pointer;white-space:nowrap" data-msort-key="mn">商品管理番号</th>';
+  validMonths.forEach(ym => {
+    html += '<th style="cursor:pointer;white-space:nowrap" data-msort-key="' + ym + '">' + (D.monthLabels[ym] || ym) + '</th>';
+  });
+  html += '<th style="cursor:pointer;white-space:nowrap" data-msort-key="total">合計</th>';
+  html += '</tr></thead><tbody>';
+
+  mnList.forEach(mn => {
+    html += '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
+    validMonths.forEach(ym => {
+      html += '<td style="text-align:right">' + fmt(getVal(monthAggs[ym], mn)) + '</td>';
+    });
+    const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
+    html += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  mWrap.innerHTML = html;
+
+  // ソート
+  mWrap.querySelectorAll('th[data-msort-key]').forEach(th => {
+    th.addEventListener('click', function() {
+      const key = this.dataset.msortKey;
+      const asc = this.dataset.sortDir === 'asc';
+      mWrap.querySelectorAll('th').forEach(t => delete t.dataset.sortDir);
+      this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const sorted = [...mnList].sort((a, b) => {
+        if (key === 'mn') return asc ? b.localeCompare(a) : a.localeCompare(b);
+        if (key === 'total') {
+          const va = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], a), 0);
+          const vb = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], b), 0);
+          return asc ? vb - va : va - vb;
+        }
+        return asc ? getVal(monthAggs[key], b) - getVal(monthAggs[key], a) : getVal(monthAggs[key], a) - getVal(monthAggs[key], b);
+      });
+      const tbody = mWrap.querySelector('tbody');
+      tbody.innerHTML = '';
+      sorted.forEach(mn => {
+        let tr = '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
+        validMonths.forEach(ym => {
+          tr += '<td style="text-align:right">' + fmt(getVal(monthAggs[ym], mn)) + '</td>';
+        });
+        const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
+        tr += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td></tr>';
         tbody.innerHTML += tr;
       });
     });
@@ -6297,6 +6406,9 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
     renderAll();
   });
 });
+
+// Product metric selector
+document.getElementById('productMetricSelect').addEventListener('change', renderProductMonthlyTable);
 
 // Repeat product filter
 document.getElementById('repeatProductFilter').addEventListener('change', renderRepeatTab);
