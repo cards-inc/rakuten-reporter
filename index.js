@@ -1,6 +1,7 @@
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 const { google } = require('googleapis');
+const { BigQuery } = require('@google-cloud/bigquery');
 const { parse } = require('csv-parse/sync');
 const AdmZip = require('adm-zip');
 const iconv = require('iconv-lite');
@@ -3082,12 +3083,29 @@ function cleanupDir(dir) {
 // ============================
 async function readSheetData(sheets, sheetName) {
   // まずスプレッドシート情報を取得してsheetIdを特定
-  const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: SPREADSHEET_ID,
+    fields: 'sheets.properties,dataSources(dataSourceId,spec)',
+  });
   const sheetMeta = spreadsheet.data.sheets.find(s => s.properties.title === sheetName);
   if (!sheetMeta) throw new Error(`Sheet "${sheetName}" not found`);
   const sheetId = sheetMeta.properties.sheetId;
   const maxRow = sheetMeta.properties.gridProperties?.rowCount || 50000;
   const maxCol = sheetMeta.properties.gridProperties?.columnCount || 26;
+
+  // DATA_SOURCEシート検出 → BigQuery直接読み取り
+  const dsProps = sheetMeta.properties?.dataSourceSheetProperties;
+  if (dsProps) {
+    console.log(`readSheetData(${sheetName}): DATA_SOURCE sheet detected, trying BigQuery direct read`);
+    try {
+      const bqResult = await readFromBigQuery(spreadsheet.data, dsProps, sheetName);
+      if (bqResult) return bqResult;
+    } catch (e) {
+      console.log(`readSheetData(${sheetName}): BigQuery direct read failed: ${e.message?.substring(0, 120)}`);
+    }
+    // BigQuery失敗時はgridDataフォールバック（500行制限あり）
+    console.log(`readSheetData(${sheetName}): falling back to gridData for DATA_SOURCE sheet`);
+  }
 
   // gridRangeで直接データ取得
   try {
@@ -3117,15 +3135,33 @@ async function readSheetData(sheets, sheetName) {
     }
   }
 
-  // 最終手段: spreadsheets.get with includeGridData（fieldsで軽量化）
-  console.log(`readSheetData(${sheetName}): falling back to gridData`);
-  const fullData = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID,
-    ranges: [`${sheetName}`],
-    includeGridData: true,
-    fields: 'sheets.properties,sheets.data.rowData.values(formattedValue,effectiveValue)',
-  });
-  const sheetInfo = fullData.data.sheets?.[0];
+  // 最終手段: spreadsheets.get with includeGridData
+  console.log(`readSheetData(${sheetName}): falling back to gridData (maxRow=${maxRow})`);
+  let fullData;
+
+  // フォールバック: 通常のgridData取得
+  const gridRanges = [`${sheetName}`, `'${sheetName}'`];
+  for (const gr of gridRanges) {
+    try {
+      fullData = await sheets.spreadsheets.get({
+        spreadsheetId: SPREADSHEET_ID,
+        includeGridData: true,
+        ranges: [gr],
+        fields: 'sheets.properties,sheets.data.rowData.values(formattedValue,effectiveValue)',
+      });
+      if (fullData.data.sheets?.[0]?.data?.[0]?.rowData?.length > 0) {
+        console.log(`readSheetData(${sheetName}): gridData range "${gr}" got ${fullData.data.sheets[0].data[0].rowData.length} rows`);
+        break;
+      }
+    } catch (e) {
+      console.log(`readSheetData(${sheetName}): gridData range "${gr}" failed: ${e.message?.substring(0, 80)}`);
+    }
+  }
+
+  if (!fullData?.data?.sheets) return { data: { values: [] } };
+
+  // 対象シートを探す
+  const sheetInfo = fullData.data.sheets?.find(s => s.properties?.title === sheetName) || fullData.data.sheets?.[0];
   const gridData = sheetInfo?.data?.[0];
   if (!gridData?.rowData) return { data: { values: [] } };
 
@@ -3139,15 +3175,129 @@ async function readSheetData(sheets, sheetName) {
   );
 
   // DATA_SOURCEシートはヘッダー行がない → dataSourceSheetPropertiesからカラム名を取得
-  const dsProps = sheetInfo?.properties?.dataSourceSheetProperties;
-  if (dsProps?.columns) {
-    const headerRow = dsProps.columns.map(c => c.reference?.name || '');
-    console.log(`readSheetData(${sheetName}): DATA_SOURCE headers: ${headerRow.slice(0, 8).join(',')}`);
+  const dsPropsFallback = sheetInfo?.properties?.dataSourceSheetProperties;
+  if (dsPropsFallback?.columns) {
+    const headerRow = dsPropsFallback.columns.map(c => c.reference?.name || '');
+    console.log(`readSheetData(${sheetName}): DATA_SOURCE headers (gridData fallback): ${headerRow.slice(0, 8).join(',')}`);
     return { data: { values: [headerRow, ...dataRows] } };
   }
 
   console.log(`readSheetData(${sheetName}): gridData success: ${dataRows.length} rows`);
   return { data: { values: dataRows } };
+}
+
+// BigQuery直接読み取り（DATA_SOURCEシート用）
+async function readFromBigQuery(spreadsheetData, dsProps, sheetName) {
+  // dataSourceSheetPropertiesからデータソースIDを取得
+  const dataSourceId = dsProps.dataSourceId;
+  if (!dataSourceId) {
+    console.log(`readFromBigQuery(${sheetName}): no dataSourceId found`);
+    return null;
+  }
+
+  // スプレッドシートのdataSourcesからBigQuery接続情報を取得
+  const dataSources = spreadsheetData.dataSources || [];
+  const ds = dataSources.find(d => d.dataSourceId === dataSourceId);
+  if (!ds) {
+    console.log(`readFromBigQuery(${sheetName}): dataSource ${dataSourceId} not found in spreadsheet dataSources`);
+    // dataSourcesが取得できない場合、カラム名からテーブル推定を試みる
+    return await readFromBigQueryByTableName(dsProps, sheetName);
+  }
+
+  // デバッグ: データソース構造をログ出力
+  console.log(`readFromBigQuery(${sheetName}): dataSource keys=${Object.keys(ds).join(',')}`);
+  if (ds.spec) console.log(`readFromBigQuery(${sheetName}): spec keys=${Object.keys(ds.spec).join(',')}`);
+  console.log(`readFromBigQuery(${sheetName}): ds.spec=${JSON.stringify(ds.spec || {}).substring(0, 300)}`);
+
+  // Sheets APIは spec.bigQuery（bigQuerySpecではない）
+  const spec = ds.spec?.bigQuery || ds.spec?.bigQuerySpec;
+  if (!spec) {
+    console.log(`readFromBigQuery(${sheetName}): no bigQuery spec in dataSource, trying table name fallback`);
+    return await readFromBigQueryByTableName(dsProps, sheetName);
+  }
+
+  const projectId = spec.projectId || 'stellar-shape-491201-g8';
+  const tableSpec = spec.tableSpec;
+  const querySpec = spec.querySpec;
+
+  let query;
+  if (tableSpec) {
+    const tableProject = tableSpec.tableProjectId || projectId;
+    const dataset = tableSpec.datasetId;
+    const table = tableSpec.tableId;
+    console.log(`readFromBigQuery(${sheetName}): table=${tableProject}.${dataset}.${table}`);
+    query = `SELECT * FROM \`${tableProject}.${dataset}.${table}\``;
+  } else if (querySpec?.rawQuery) {
+    query = querySpec.rawQuery;
+    console.log(`readFromBigQuery(${sheetName}): using custom query (${query.substring(0, 100)}...)`);
+  } else {
+    console.log(`readFromBigQuery(${sheetName}): no tableSpec or querySpec found`);
+    return null;
+  }
+
+  const bigquery = new BigQuery({ projectId });
+  let rows;
+  try {
+    [rows] = await bigquery.query({ query });
+  } catch (e) {
+    // リージョン指定なしで失敗した場合、USを試す
+    console.log(`readFromBigQuery(${sheetName}): auto-location failed, trying US: ${e.message?.substring(0, 80)}`);
+    [rows] = await bigquery.query({ query, location: 'US' });
+  }
+  console.log(`readFromBigQuery(${sheetName}): BigQuery returned ${rows.length} rows`);
+
+  if (rows.length === 0) return { data: { values: [] } };
+
+  const headers = Object.keys(rows[0]);
+  const values = [headers, ...rows.map(row => headers.map(h => {
+    const v = row[h];
+    if (v === null || v === undefined) return '';
+    if (v instanceof Date) return v.toISOString();
+    if (typeof v === 'object' && v.value) return String(v.value); // BigQuery NUMERIC/BIGNUMERIC
+    return String(v);
+  }))];
+
+  console.log(`readFromBigQuery(${sheetName}): success - ${headers.length} cols, ${rows.length} rows, headers: ${headers.slice(0, 8).join(',')}`);
+  return { data: { values } };
+}
+
+// テーブル名推定によるBigQuery読み取りフォールバック
+async function readFromBigQueryByTableName(dsProps, sheetName) {
+  // カラム名からテーブルを特定できない場合、シート名をテーブル名として使用
+  const projectId = 'stellar-shape-491201-g8';
+  const bigquery = new BigQuery({ projectId });
+
+  // データセット一覧から該当テーブルを検索
+  try {
+    const [datasets] = await bigquery.getDatasets();
+    for (const dataset of datasets) {
+      try {
+        const [tables] = await dataset.getTables();
+        const matchTable = tables.find(t => t.id === sheetName || t.id === sheetName.replace(/_raw$/, ''));
+        if (matchTable) {
+          const fullTable = `${projectId}.${dataset.id}.${matchTable.id}`;
+          console.log(`readFromBigQueryByTableName(${sheetName}): found table ${fullTable}`);
+          const query = `SELECT * FROM \`${fullTable}\``;
+          const [rows] = await bigquery.query({ query, location: 'US' });
+          console.log(`readFromBigQueryByTableName(${sheetName}): ${rows.length} rows`);
+
+          if (rows.length === 0) return { data: { values: [] } };
+          const headers = Object.keys(rows[0]);
+          const values = [headers, ...rows.map(row => headers.map(h => {
+            const v = row[h];
+            if (v === null || v === undefined) return '';
+            if (v instanceof Date) return v.toISOString();
+            if (typeof v === 'object' && v.value) return String(v.value);
+            return String(v);
+          }))];
+          return { data: { values } };
+        }
+      } catch (e) { /* skip dataset */ }
+    }
+  } catch (e) {
+    console.log(`readFromBigQueryByTableName(${sheetName}): dataset scan failed: ${e.message?.substring(0, 80)}`);
+  }
+  return null;
 }
 
 // ============================
@@ -4108,6 +4258,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <nav class="tab-bar">
   <div class="tab-bar-inner">
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
+    <div class="main-tab" data-tab="tab-product">商品別実績</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
     <div class="main-tab" data-tab="tab-acq">CRM分析</div>
     <div class="main-tab" data-tab="tab-customer">顧客分析</div>
@@ -4156,19 +4307,12 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="section-title">日別売上（RPP経由 / 広告外）</div>
     <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
   </div>
-  <div class="section-box">
-    <div class="section-title">商品別実績</div>
-    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <span class="filter-label">商品</span>
-      <select id="productItemSelect" class="filter-select" style="width:auto;min-width:300px;max-width:500px">
-        <option value="">商品を選択してください</option>
-      </select>
-      <input type="date" id="productDateFrom" style="display:none">
-      <input type="date" id="productDateTo" style="display:none">
-      <button id="productDateClear" style="display:none">クリア</button>
-    </div>
-    <div id="productMonthlyWrap" style="overflow-x:auto"></div>
-  </div>
+</div>
+
+<!-- Tab: 商品別実績 -->
+<div class="tab-panel" id="tab-product">
+  <div class="panel-title">商品別実績</div>
+  <div id="productTableWrap" style="overflow-x:auto"></div>
 </div>
 
 <!-- Tab 2: 広告分析 -->
@@ -4746,178 +4890,162 @@ function renderSalesTab() {
     });
   }
 
-  try { initProductSelector(); } catch(e) { console.error('initProductSelector error:', e); }
-  renderProductMonthly();
 }
 
-function initProductSelector() {
-  const pSel = document.getElementById('productItemSelect');
-  if (!pSel || pSel.options.length > 1) return;
-  // 商品管理番号で直接マッチ（allItemとrppItemの両方から収集）
-  const productMap = {};
-  D.months.forEach(ym => {
+function aggregateProductMonth(months) {
+  const agg = {};
+  months.forEach(ym => {
     (D.allItemByMonth[ym] || []).forEach(r => {
-      const key = r.manageNum;
-      if (key && !productMap[key]) productMap[key] = r.name || key;
+      const mn = (r.manageNum || '').trim();
+      if (!mn) return;
+      if (!agg[mn]) agg[mn] = { manageNum: mn, sales: 0, orders: 0, access: 0, rppSpend: 0, rppSales: 0, rppClicks: 0, rppOrders: 0 };
+      agg[mn].sales += r.sales || 0;
+      agg[mn].orders += r.orders || 0;
+      agg[mn].access += r.access || 0;
     });
     (D.rppItemByMonth[ym] || []).forEach(r => {
-      const key = r.manageNum;
-      if (key && !productMap[key]) productMap[key] = r.name || key;
+      const mn = (r.manageNum || '').trim();
+      if (!mn) return;
+      if (!agg[mn]) agg[mn] = { manageNum: mn, sales: 0, orders: 0, access: 0, rppSpend: 0, rppSales: 0, rppClicks: 0, rppOrders: 0 };
+      agg[mn].rppSpend += r.spend || 0;
+      agg[mn].rppSales += r.sales || 0;
+      agg[mn].rppClicks += r.clicks || 0;
+      agg[mn].rppOrders += r.orders || 0;
     });
   });
-  if (D.masterProducts) {
-    Object.keys(productMap).forEach(key => {
-      if (D.masterProducts[key]) productMap[key] = D.masterProducts[key];
-    });
-  }
-  Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
-    const opt = document.createElement('option');
-    opt.value = key;
-    opt.textContent = key + (name !== key ? ' - ' + String(name).substring(0, 30) : '');
-    pSel.appendChild(opt);
-  });
-  console.log('[initProductSelector] ' + pSel.options.length + ' products loaded');
+  return agg;
 }
 
-function renderProductMonthly() {
-  const wrap = document.getElementById('productMonthlyWrap');
-  const sel = document.getElementById('productItemSelect');
-  const selected = sel ? sel.value : '';
-  if (!selected) {
-    wrap.innerHTML = '<div class="no-data">商品を選択してください</div>';
+function renderProductTab() {
+  const wrap = document.getElementById('productTableWrap');
+  const prodMonth = document.getElementById('monthFilter').value || 'all';
+
+  // 2025-10以降のデータのみ
+  const validMonths = D.months.filter(ym => ym >= '2025-10');
+  const targetMonths = prodMonth === 'all' ? validMonths : (validMonths.includes(prodMonth) ? [prodMonth] : []);
+
+  if (targetMonths.length === 0) {
+    wrap.innerHTML = '<div class="no-data">該当月のデータがありません</div>';
     return;
   }
 
-  // 商品管理番号で直接マッチ
-  const matchItem = (r) => r.manageNum === selected;
+  // 商品管理番号ごとに集計
+  const productAgg = aggregateProductMonth(targetMonths);
 
-  const pDateFrom = document.getElementById('productDateFrom').value;
-  const pDateTo = document.getElementById('productDateTo').value;
-  const hasDateRange = pDateFrom && pDateTo;
-
-  // Helper: compute metrics from items + rppItems arrays
-  function calcMetrics(items, rppItems) {
-    const sales = items.reduce((s, r) => s + r.sales, 0);
-    const access = items.reduce((s, r) => s + r.access, 0);
-    const orders = items.reduce((s, r) => s + r.orders, 0);
-    // For cvr/unitPrice: use weighted avg if multiple months, otherwise raw value
-    const cvr = access > 0 ? (orders / access * 100) : 0;
-    const unitPrice = orders > 0 ? Math.round(sales / orders) : 0;
-
-    const rppSales = rppItems.reduce((s, r) => s + r.sales, 0);
-    const rppClicks = rppItems.reduce((s, r) => s + r.clicks, 0);
-    const rppOrders = rppItems.reduce((s, r) => s + r.orders, 0);
-    const rppSpend = rppItems.reduce((s, r) => s + r.spend, 0);
-
-    const nonRppSales = sales - rppSales;
-    const nonRppAccess = access - rppClicks;
-    const nonRppOrders = orders - rppOrders;
-    const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
-    const nonRppCvr = nonRppAccess > 0 ? (nonRppOrders / nonRppAccess * 100) : 0;
-    const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
-    const nonRppUnitPrice = nonRppOrders > 0 ? Math.round(nonRppSales / nonRppOrders) : 0;
-    const rppCpc = rppClicks > 0 ? Math.round(rppSpend / rppClicks) : 0;
-    const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
-    const tacos = sales > 0 ? (rppSpend / sales * 100) : 0;
-
-    return { sales, access, orders, cvr, unitPrice, rppSpend, rppSales, rppClicks, rppOrders, rppCvr, rppUnitPrice, rppCpc, rppRoas, nonRppSales, nonRppAccess, nonRppCvr, nonRppUnitPrice, tacos };
+  // 前月比・前年同月比（月指定時のみ）
+  let prevMonthAgg = null, prevYearAgg = null;
+  const hasCmp = prodMonth !== 'all' && prodMonth;
+  if (hasCmp) {
+    const [y, m] = prodMonth.split('-').map(Number);
+    const pmYm = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+    const pyYm = (y - 1) + '-' + String(m).padStart(2, '0');
+    if (D.months.includes(pmYm)) prevMonthAgg = aggregateProductMonth([pmYm]);
+    if (D.months.includes(pyYm)) prevYearAgg = aggregateProductMonth([pyYm]);
   }
 
-  const metricDefs = [
+  const rows = Object.values(productAgg).map(p => {
+    const cvr = p.access > 0 ? (p.orders / p.access * 100) : 0;
+    const unitPrice = p.orders > 0 ? Math.round(p.sales / p.orders) : 0;
+    const rppRoas = p.rppSpend > 0 ? (p.rppSales / p.rppSpend * 100) : 0;
+    const rppCvr = p.rppClicks > 0 ? (p.rppOrders / p.rppClicks * 100) : 0;
+    const rppCpc = p.rppClicks > 0 ? Math.round(p.rppSpend / p.rppClicks) : 0;
+    return { ...p, cvr, unitPrice, rppRoas, rppCvr, rppCpc };
+  });
+
+  // 売上降順ソート
+  rows.sort((a, b) => b.sales - a.sales);
+
+  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
+
+  function cmpHtml(cur, prev) {
+    if (!prev || prev === 0) return '-';
+    const ch = ((cur - prev) / Math.abs(prev) * 100);
+    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+    return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
+  }
+
+  const cols = [
+    { label: '商品管理番号', key: 'manageNum', align: 'left', fmt: v => v, sticky: true },
     { label: '売上', key: 'sales', fmt: v => yen(v) },
-    { label: 'RPP広告売上', key: 'rppSales', fmt: v => yen(v), rpp: true },
-    { label: 'RPP広告以外売上', key: 'nonRppSales', fmt: v => yen(v), rpp: true },
-    { label: 'アクセス数', key: 'access', fmt: v => comma(v) },
-    { label: 'RPP広告アクセス数', key: 'rppClicks', fmt: v => comma(v), rpp: true },
-    { label: 'RPP広告以外アクセス数', key: 'nonRppAccess', fmt: v => comma(v), rpp: true },
+    { label: '売上構成比', key: '_salesRatio', fmt: (v, r) => totalSales > 0 ? (r.sales / totalSales * 100).toFixed(1) + '%' : '-' },
+    { label: '件数', key: 'orders', fmt: v => comma(v) },
+    { label: 'アクセス', key: 'access', fmt: v => comma(v) },
     { label: '転換率', key: 'cvr', fmt: v => v.toFixed(2) + '%' },
-    { label: 'RPP広告転換率', key: 'rppCvr', fmt: v => v.toFixed(2) + '%', rpp: true },
-    { label: 'RPP広告以外転換率', key: 'nonRppCvr', fmt: v => v.toFixed(2) + '%', rpp: true },
     { label: '客単価', key: 'unitPrice', fmt: v => yen(v) },
-    { label: 'RPP広告客単価', key: 'rppUnitPrice', fmt: v => yen(v), rpp: true },
-    { label: 'RPP広告以外客単価', key: 'nonRppUnitPrice', fmt: v => yen(v), rpp: true },
-    { label: 'CPC', key: 'rppCpc', fmt: v => yen(v), rpp: true },
-    { label: 'ROAS', key: 'rppRoas', fmt: v => v.toFixed(1) + '%', rpp: true },
-    { label: 'TACOS', key: 'tacos', fmt: v => v.toFixed(1) + '%', rpp: true },
+    { label: 'RPP費用', key: 'rppSpend', fmt: v => yen(v) },
+    { label: 'RPP売上', key: 'rppSales', fmt: v => yen(v) },
+    { label: 'RPP ROAS', key: 'rppRoas', fmt: v => v.toFixed(0) + '%' },
+    { label: 'RPP CVR', key: 'rppCvr', fmt: v => v.toFixed(2) + '%' },
+    { label: 'RPP CPC', key: 'rppCpc', fmt: v => yen(v) },
   ];
 
-  if (hasDateRange) {
-    // Date range mode: aggregate all months in range for all_item_raw, filter by date for rpp_item_raw
-    // Determine which months fall in the date range
-    const fromMonth = pDateFrom.substring(0, 7);
-    const toMonth = pDateTo.substring(0, 7);
-    const filteredMonths = D.months.filter(ym => ym >= fromMonth && ym <= toMonth);
-
-    let allItems = [];
-    let allRppItems = [];
-    filteredMonths.forEach(ym => {
-      const items = (D.allItemByMonth[ym] || []).filter(matchItem);
-      allItems.push(...items);
-      const rppItems = (D.rppItemByMonth[ym] || []).filter(matchItem);
-      // Filter RPP items by exact date range
-      rppItems.forEach(r => {
-        if (r.date && r.date >= pDateFrom && r.date <= pDateTo) {
-          allRppItems.push(r);
-        } else if (!r.date) {
-          allRppItems.push(r); // no date info, include
-        }
-      });
-    });
-
-    const metrics = calcMetrics(allItems, allRppItems);
-
-    let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
-    html += '<th style="min-width:120px">' + pDateFrom + ' 〜 ' + pDateTo + '</th>';
-    html += '</tr></thead><tbody>';
-
-    metricDefs.forEach(def => {
-      const isRpp = !!def.rpp;
-      html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
-      html += '<td style="text-align:right">' + def.fmt(metrics[def.key]) + '</td>';
-      html += '</tr>';
-    });
-
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
-  } else {
-    // Monthly mode (default)
-    const months = D.months.slice().reverse(); // chronological
-
-    const monthMetrics = months.map(ym => {
-      const items = (D.allItemByMonth[ym] || []).filter(matchItem);
-      const rppItems = (D.rppItemByMonth[ym] || []).filter(matchItem);
-      return calcMetrics(items, rppItems);
-    });
-
-    const momChange = (cur, prev) => {
-      if (!prev || prev === 0) return '-';
-      const ch = ((cur - prev) / Math.abs(prev) * 100);
-      const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
-      return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
-    };
-
-    let html = '<table style="font-size:12px"><thead><tr><th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1"></th>';
-    months.forEach(ym => { html += '<th>' + (D.monthLabels[ym] || ym) + '</th>'; });
-    if (months.length >= 2) html += '<th>前月比</th>';
-    html += '</tr></thead><tbody>';
-
-    metricDefs.forEach(def => {
-      const isRpp = !!def.rpp;
-      html += '<tr style="' + (isRpp ? 'background:#f0f4ff' : '') + '"><td style="text-align:left;font-weight:500;white-space:nowrap;position:sticky;left:0;background:' + (isRpp ? '#f0f4ff' : '#fff') + ';z-index:1">' + def.label + '</td>';
-      monthMetrics.forEach(m => {
-        html += '<td style="text-align:right">' + def.fmt(m[def.key]) + '</td>';
-      });
-      if (months.length >= 2) {
-        const last = monthMetrics[monthMetrics.length - 1][def.key];
-        const prev = monthMetrics[monthMetrics.length - 2][def.key];
-        html += '<td style="text-align:right">' + momChange(last, prev) + '</td>';
-      }
-      html += '</tr>';
-    });
-
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
+  // 前月比・前年同月比カラム追加（月指定時のみ）
+  if (hasCmp && (prevMonthAgg || prevYearAgg)) {
+    if (prevMonthAgg) cols.push({ label: '前月比(売上)', key: '_momSales', align: 'right' });
+    if (prevYearAgg) cols.push({ label: '前年同月比(売上)', key: '_yoySales', align: 'right' });
   }
+
+  let html = '<table style="font-size:12px;width:100%"><thead><tr>';
+  cols.forEach(c => {
+    const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#f8f9fa;z-index:1;' : '';
+    html += '<th style="' + stickyStyle + 'text-align:' + (c.align || 'right') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '">' + c.label + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  if (rows.length === 0) {
+    html += '<tr><td colspan="' + cols.length + '" style="text-align:center;padding:20px">データなし</td></tr>';
+  } else {
+    rows.forEach(r => {
+      html += '<tr>';
+      cols.forEach(c => {
+        const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#fff;z-index:1;' : '';
+        let val;
+        if (c.key === '_salesRatio') val = c.fmt(0, r);
+        else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
+        else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
+        else val = c.fmt(r[c.key]);
+        html += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+      });
+      html += '</tr>';
+    });
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+
+  // ソート機能
+  wrap.querySelectorAll('th[data-sort-key]').forEach(th => {
+    th.addEventListener('click', function() {
+      const key = this.dataset.sortKey;
+      const asc = this.dataset.sortDir === 'asc';
+      wrap.querySelectorAll('th').forEach(t => delete t.dataset.sortDir);
+      this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const sorted = [...rows].sort((a, b) => {
+        let va, vb;
+        if (key === '_salesRatio') { va = a.sales; vb = b.sales; }
+        else if (key === '_momSales') { va = prevMonthAgg?.[a.manageNum]?.sales ? a.sales / prevMonthAgg[a.manageNum].sales : 0; vb = prevMonthAgg?.[b.manageNum]?.sales ? b.sales / prevMonthAgg[b.manageNum].sales : 0; }
+        else if (key === '_yoySales') { va = prevYearAgg?.[a.manageNum]?.sales ? a.sales / prevYearAgg[a.manageNum].sales : 0; vb = prevYearAgg?.[b.manageNum]?.sales ? b.sales / prevYearAgg[b.manageNum].sales : 0; }
+        else { va = typeof a[key] === 'string' ? a[key] : a[key] || 0; vb = typeof b[key] === 'string' ? b[key] : b[key] || 0; }
+        if (typeof va === 'string') return asc ? vb.localeCompare(va) : va.localeCompare(vb);
+        return asc ? vb - va : va - vb;
+      });
+      const tbody = wrap.querySelector('tbody');
+      tbody.innerHTML = '';
+      sorted.forEach(r => {
+        let tr = '<tr>';
+        cols.forEach(c => {
+          const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#fff;z-index:1;' : '';
+          let val;
+          if (c.key === '_salesRatio') val = c.fmt(0, r);
+          else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
+          else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
+          else val = c.fmt(r[c.key]);
+          tr += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+        });
+        tr += '</tr>';
+        tbody.innerHTML += tr;
+      });
+    });
+  });
 }
 
 function getAllMonthData(dataByMonth) {
@@ -6040,6 +6168,7 @@ function renderTimingTab() {
 // ── Render all ──
 function renderAll() {
   renderSalesTab();
+  renderProductTab();
   renderAdsTab();
   renderAcqTab();
   renderRepeatTab();
@@ -6054,17 +6183,20 @@ function renderAll() {
 
 // Main tabs
 function updateFilterUI(tabId) {
-  const monthTabs = ['tab-ads', 'tab-acq'];
+  const monthTabs = ['tab-ads', 'tab-acq', 'tab-product'];
   const noFilterTabs = ['tab-customer'];
+  const noCompareTabs = ['tab-product'];
   const mf = document.getElementById('monthFilter');
   const df = document.getElementById('dayFilterFrom');
   const dt = document.getElementById('dayFilterTo');
   const ds = document.getElementById('dayFilterSep');
   const filterBar = document.querySelector('.filter-bar');
+  const compareGroup = filterBar.querySelectorAll('.filter-group')[1];
   if (noFilterTabs.includes(tabId)) {
     filterBar.style.display = 'none';
   } else {
     filterBar.style.display = '';
+    if (compareGroup) compareGroup.style.display = noCompareTabs.includes(tabId) ? 'none' : '';
     if (monthTabs.includes(tabId)) {
       mf.style.display = ''; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
     } else {
@@ -6080,6 +6212,14 @@ document.querySelectorAll('.main-tab').forEach(tab => {
     const target = document.getElementById(this.dataset.tab);
     if (target) target.classList.add('active');
     updateFilterUI(this.dataset.tab);
+    // 商品別実績タブはデフォルト当月
+    if (this.dataset.tab === 'tab-product') {
+      const mf = document.getElementById('monthFilter');
+      const now = new Date();
+      const curYm = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+      if ([...mf.options].some(o => o.value === curYm)) mf.value = curYm;
+      renderProductTab();
+    }
   });
 });
 
@@ -6156,16 +6296,6 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
     compareMode = this.dataset.compare;
     renderAll();
   });
-});
-
-// Product item selector & date range
-document.getElementById('productItemSelect').addEventListener('change', renderProductMonthly);
-document.getElementById('productDateFrom').addEventListener('change', renderProductMonthly);
-document.getElementById('productDateTo').addEventListener('change', renderProductMonthly);
-document.getElementById('productDateClear').addEventListener('click', function() {
-  document.getElementById('productDateFrom').value = '';
-  document.getElementById('productDateTo').value = '';
-  renderProductMonthly();
 });
 
 // Repeat product filter
