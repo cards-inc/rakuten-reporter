@@ -4748,13 +4748,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="filter-bar-inner">
     <div class="filter-group">
       <span class="filter-label">期間</span>
-      <select id="periodType" class="filter-select" style="display:none">
-        <option value="day" selected>日</option>
-      </select>
-      <select id="monthFilter" class="filter-select" style="display:none"></select>
-      <input type="date" id="dayFilterFrom" class="filter-select" style="width:auto">
-      <span id="dayFilterSep"> 〜 </span>
-      <input type="date" id="dayFilterTo" class="filter-select" style="width:auto">
+      <select id="monthFilter" class="filter-select"></select>
     </div>
     <div class="filter-group">
       <span class="filter-label">比較</span>
@@ -5071,9 +5065,6 @@ const safe = s => {
 // ── State ──
 let currentMonth = 'all';
 let compareMode = 'mom'; // mom, yoy
-let periodType = 'day'; // always day (date range)
-let dayFrom = null;
-let dayTo = null;
 const chartInstances = {};
 
 function destroyChart(id) {
@@ -5118,47 +5109,13 @@ function changeHtml(changeVal) {
 }
 
 // ── Data getters ──
-// shiftedRange: if provided, use this {from, to} instead of dayFrom/dayTo
-function getMonthData(dataByMonth, ym, shiftedRange) {
-  if (periodType === 'day' && (shiftedRange || (dayFrom && dayTo))) {
-    const from = shiftedRange ? shiftedRange.from : dayFrom;
-    const to = shiftedRange ? shiftedRange.to : dayTo;
-    const fromYm = from.substring(0, 7);
-    const toYm = to.substring(0, 7);
-    const all = [];
-    Object.entries(dataByMonth).forEach(([m, arr]) => {
-      arr.forEach(r => {
-        const d = (r.date || '').replace(/\\//g, '-');
-        if (d) {
-          // 日付がある場合は日付でフィルタ
-          if (d >= from && d <= to) all.push(r);
-        } else {
-          // 日付がない月次集計データは月キーで判定
-          if (m >= fromYm && m <= toYm) all.push(r);
-        }
-      });
-    });
-    return all;
-  }
+function getMonthData(dataByMonth, ym) {
   if (ym === 'all') {
     const all = [];
     Object.values(dataByMonth).forEach(arr => all.push(...arr));
     return all;
   }
   return dataByMonth[ym] || [];
-}
-
-// Get shifted date range for comparison (mom = prev month, yoy = prev year)
-function getCompareRange(mode) {
-  if (!dayFrom || !dayTo) return null;
-  function shiftDate(dateStr, months) {
-    const d = new Date(dateStr + 'T00:00:00');
-    d.setMonth(d.getMonth() + months);
-    return d.toISOString().substring(0, 10);
-  }
-  if (mode === 'mom') return { from: shiftDate(dayFrom, -1), to: shiftDate(dayTo, -1) };
-  if (mode === 'yoy') return { from: shiftDate(dayFrom, -12), to: shiftDate(dayTo, -12) };
-  return null;
 }
 
 function sumField(arr, field) {
@@ -5237,8 +5194,7 @@ function buildTable(containerId, columns, rows, opts = {}) {
 function renderSalesTab() {
   const data = getMonthData(D.allByMonth, currentMonth);
   const cmpYm = getCompareMonth(currentMonth, compareMode);
-  const cmpRange = getCompareRange(compareMode);
-  const cmpData = cmpRange ? getMonthData(D.allByMonth, cmpYm, cmpRange) : (cmpYm ? getMonthData(D.allByMonth, cmpYm) : []);
+  const cmpData = cmpYm ? getMonthData(D.allByMonth, cmpYm) : [];
 
   const totalSales = sumField(data, 'sales');
   const totalOrders = sumField(data, 'orders');
@@ -5334,12 +5290,10 @@ function renderSalesTab() {
   // 前月・前年比
   const prevMonthYm = getCompareMonth(currentMonth, 'mom');
   const prevYearYm = getCompareMonth(currentMonth, 'yoy');
-  const prevMonthRange = getCompareRange('mom');
-  const prevYearRange = getCompareRange('yoy');
-  function getTreeCompare(ym, range) {
+  function getTreeCompare(ym) {
     if (!ym) return null;
-    const d = getMonthData(D.allByMonth, ym, range);
-    const r = getMonthData(D.rppByMonth, ym, range);
+    const d = getMonthData(D.allByMonth, ym);
+    const r = getMonthData(D.rppByMonth, ym);
     const s = sumField(d, 'sales'), o = sumField(d, 'orders'), a = sumField(d, 'access');
     const rs = sumField(r, 'sales'), rc = sumField(r, 'clicks'), ro = sumField(r, 'orders');
     return {
@@ -5349,8 +5303,8 @@ function renderSalesTab() {
       access: a, cvr: a > 0 ? (o/a*100) : 0, unitPrice: o > 0 ? Math.round(s/o) : 0,
     };
   }
-  const prevM = getTreeCompare(prevMonthYm, prevMonthRange);
-  const prevY = getTreeCompare(prevYearYm, prevYearRange);
+  const prevM = getTreeCompare(prevMonthYm);
+  const prevY = getTreeCompare(prevYearYm);
 
   function treeRatio(cur, prev) {
     if (!prev || prev === 0) return '-';
@@ -5879,12 +5833,11 @@ function renderAdsTab() {
 
   // Compare
   let cTotalSpend = null, cTotalSales = null;
-  const adCmpRange = getCompareRange(compareMode);
   if (cmpYm) {
-    const cr = getMonthData(D.rppByMonth, cmpYm, adCmpRange);
-    const ct = getMonthData(D.tdaByMonth, cmpYm, adCmpRange);
-    const ca = getMonthData(D.adByMonth, cmpYm, adCmpRange);
-    const cc = getMonthData(D.cpaByMonth || {}, cmpYm, adCmpRange);
+    const cr = getMonthData(D.rppByMonth, cmpYm);
+    const ct = getMonthData(D.tdaByMonth, cmpYm);
+    const ca = getMonthData(D.adByMonth, cmpYm);
+    const cc = getMonthData(D.cpaByMonth || {}, cmpYm);
     cTotalSpend = sumField(cr,'spend') + sumField(ct,'spend') + sumField(ca,'spend') + sumField(cc,'spend');
     cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales') + sumField(cc,'sales');
   }
@@ -7014,13 +6967,9 @@ function renderAll() {
 
 // Main tabs
 function updateFilterUI(tabId) {
-  const monthTabs = ['tab-ads', 'tab-acq', 'tab-product'];
   const noFilterTabs = ['tab-customer'];
   const noCompareTabs = ['tab-product'];
   const mf = document.getElementById('monthFilter');
-  const df = document.getElementById('dayFilterFrom');
-  const dt = document.getElementById('dayFilterTo');
-  const ds = document.getElementById('dayFilterSep');
   const filterBar = document.querySelector('.filter-bar');
   const compareGroup = filterBar.querySelectorAll('.filter-group')[1];
   if (noFilterTabs.includes(tabId)) {
@@ -7028,11 +6977,7 @@ function updateFilterUI(tabId) {
   } else {
     filterBar.style.display = '';
     if (compareGroup) compareGroup.style.display = noCompareTabs.includes(tabId) ? 'none' : '';
-    if (monthTabs.includes(tabId)) {
-      mf.style.display = ''; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
-    } else {
-      mf.style.display = 'none'; df.style.display = ''; dt.style.display = ''; ds.style.display = '';
-    }
+    mf.style.display = '';
   }
 }
 document.querySelectorAll('.main-tab').forEach(tab => {
@@ -7078,43 +7023,11 @@ document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
 });
 
 // Period type toggle (月/日)
-const periodTypeSelect = document.getElementById('periodType');
-const dayFilterFrom = document.getElementById('dayFilterFrom');
-const dayFilterTo = document.getElementById('dayFilterTo');
-const dayFilterSep = document.getElementById('dayFilterSep');
-// 日付の選択肢を設定（all_rawの全日付を収集、YYYY-MM-DD形式に正規化）
-const allDates = [];
-D.months.forEach(ym => {
-  (D.allByMonth[ym] || []).forEach(r => {
-    if (r.date) {
-      const normalized = r.date.replace(/\\//g, '-');
-      if (!allDates.includes(normalized)) allDates.push(normalized);
-    }
-  });
-});
-allDates.sort().reverse();
-if (allDates.length > 0) {
-  // Default: latest month's full range
-  const latestDate = allDates[0]; // most recent date
-  const latestYm = latestDate.substring(0, 7);
-  const firstOfMonth = latestYm + '-01';
-  dayFilterTo.value = latestDate;
-  dayFilterFrom.value = firstOfMonth;
-  dayFrom = firstOfMonth;
-  dayTo = latestDate;
-  // Also set currentMonth for compare calculations
-  currentMonth = latestYm;
+// Default to latest month
+if (D.months.length > 0) {
+  currentMonth = D.months[D.months.length - 1];
+  monthSelect.value = currentMonth;
 }
-
-dayFilterFrom.addEventListener('change', function() {
-  dayFrom = this.value;
-  if (dayFrom) currentMonth = dayFrom.substring(0, 7);
-  renderAll();
-});
-dayFilterTo.addEventListener('change', function() {
-  dayTo = this.value;
-  renderAll();
-});
 
 // Month filter
 monthSelect.addEventListener('change', function() {
