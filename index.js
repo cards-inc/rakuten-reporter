@@ -4185,8 +4185,8 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="sub-panel active" id="ad-rpp">
       <div class="sub-tabs" id="rppSubTabs" style="margin-bottom:12px;border-bottom:1px solid #e0e0e0">
         <div class="sub-tab active" data-subtab="rpp-all">全体</div>
-        <div class="sub-tab" data-subtab="rpp-item">商品別</div>
-        <div class="sub-tab" data-subtab="rpp-kw">KW別</div>
+        <div class="sub-tab" data-subtab="rpp-item">商品入札</div>
+        <div class="sub-tab" data-subtab="rpp-kw">KW入札</div>
       </div>
       <div class="sub-panel active" id="rpp-all">
         <div id="rppKpiRow" class="kpi-row"></div>
@@ -4985,7 +4985,7 @@ function renderAdsTab() {
     (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
   ).join('');
 
-  // RPP KPIs - 全体/商品別(全体−KW)/KW別 の3分解
+  // RPP KPIs - 全体/商品入札(全体−KW)/KW入札 の3分解
   const rppKwSpendTotal = sumField(rppKwData, 'spend');
   const rppKwSalesTotal = sumField(rppKwData, 'sales');
   const rppKwClicksTotal = sumField(rppKwData, 'clicks');
@@ -5011,11 +5011,11 @@ function renderAdsTab() {
   document.getElementById('rppKpiRow').innerHTML =
     '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:9%"><col style="width:13%"><col style="width:8%"><col style="width:15%"><col style="width:11%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>費用比率</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
     makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders, null) +
-    makeRow('商品別', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio) +
-    makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
+    makeRow('商品入札', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio) +
+    makeRow('KW入札', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
     '</tbody></table></div>';
 
-  // RPP daily chart - 商品別/KW別費用の積み上げ + 売上ライン
+  // RPP daily chart - 商品入札/KW入札費用の積み上げ + 売上ライン
   destroyChart('chartRppDaily');
   // 日別で商品別費用を集計（rpp_item_raw）、KW別 = 全体 - 商品別
   const itemSpendByDate = {};
@@ -5030,8 +5030,8 @@ function renderAdsTab() {
       data: {
         labels: rLabels,
         datasets: [
-          { label: '商品別費用', data: itemSpendArr, backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
-          { label: 'KW別費用', data: kwSpendArr, backgroundColor: 'rgba(232,113,10,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
+          { label: '商品入札費用', data: itemSpendArr, backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
+          { label: 'KW入札費用', data: kwSpendArr, backgroundColor: 'rgba(232,113,10,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
           { label: '売上', data: rppSorted.map(r => r.sales), type: 'line', borderColor: '#0d904f', yAxisID: 'y', tension: 0.3, pointRadius: 1, order: 0 },
         ]
       },
