@@ -233,9 +233,9 @@ functions.http('fetchRppReport', async (req, res) => {
       });
       console.log('キーワード別ラジオ:', kwRadioClicked);
       await new Promise(r => setTimeout(r, 1000));
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodMonth'); if (r) r.click(); });
+      // 日別で取得（月別だと1商品1KWに集約されるため）
+      await page.evaluate(() => { const r = document.querySelector('#rdPeriodDay'); if (r) r.click(); });
       await new Promise(r => setTimeout(r, 2000));
-      // 月ごと選択後に日付設定（YYYY-MM）
       await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
       await clickButton(page, '全キーワードレポートダウンロード');
 
@@ -3878,7 +3878,7 @@ async function generateDashboardHtml() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>楽天市場アナリティクス 百福堂</title>
+<title>楽天市場アナリティクス</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"><\/script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"><\/script>
 <style>
@@ -4096,9 +4096,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 
 <header class="app-header" onclick="location.reload()" style="cursor:pointer">
   <div class="header-inner">
-    <div style="display:flex;align-items:center;gap:10px">
-      <img src="cards_logo.png" alt="CARDS" style="height:32px" onerror="this.style.display='none'">
-      <div class="header-title">楽天市場アナリティクス 百福堂</div>
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <img src="../cards_logo.png" alt="CARDS" style="height:28px" onerror="this.style.display='none'">
+      <div style="font-size:12px;color:#fff;letter-spacing:1px;font-weight:500">楽天市場アナリティクス</div>
     </div>
     <div class="header-meta">更新: ${safe(dateStr)}</div>
   </div>
@@ -5000,17 +5000,20 @@ function renderAdsTab() {
   const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
   const rppCpc = rppClicks > 0 ? rppSpend / rppClicks : 0;
 
-  const makeRow = (label, spend, sales, clicks, orders) => {
+  const makeRow = (label, spend, sales, clicks, orders, ratio) => {
     const roas = spend > 0 ? (sales / spend * 100).toFixed(0) : 0;
     const cvr = clicks > 0 ? (orders / clicks * 100).toFixed(2) : '0.00';
     const cpc = clicks > 0 ? Math.round(spend / clicks) : 0;
-    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
+    const ratioStr = ratio !== null ? ratio.toFixed(1) + '%' : '-';
+    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + ratioStr + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
   };
+  const itemRatio = rppSpend > 0 ? (rppItemOnlySpend / rppSpend * 100) : 0;
+  const kwRatio = rppSpend > 0 ? (rppKwSpendTotal / rppSpend * 100) : 0;
   document.getElementById('rppKpiRow').innerHTML =
-    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:10%"><col style="width:15%"><col style="width:18%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
-    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders) +
-    makeRow('商品別', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders) +
-    makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal) +
+    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:9%"><col style="width:13%"><col style="width:8%"><col style="width:15%"><col style="width:11%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>費用比率</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
+    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders, null) +
+    makeRow('商品別', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio) +
+    makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
     '</tbody></table></div>';
 
   // RPP daily chart - 商品別/KW別費用の積み上げ + 売上ライン
@@ -5227,13 +5230,17 @@ function renderAdsTab() {
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
   ], afiProducts, { limit: 30 });
 
-  // Affiliate by rate
+  // Affiliate by rate with ratio
+  const afiRateData = (D.afiByRateRows || []).slice();
+  const afiTotalSales = afiRateData.reduce((s, r) => s + (r.sales || 0), 0);
+  const afiRateWithRatio = afiRateData.map(r => ({ ...r, salesRatio: afiTotalSales > 0 ? (r.sales / afiTotalSales * 100) : 0 }));
   buildTable('afiByRateTableWrap', [
     { key: 'rate', label: '料率', fmt: v => safe(v) },
     { key: 'count', label: '件数', fmt: v => comma(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'salesRatio', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
-  ], D.afiByRateRows || [], { limit: 20 });
+  ], afiRateWithRatio, { limit: 20 });
 }
 
 function renderAcqTab() {
