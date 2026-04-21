@@ -4166,14 +4166,14 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
-  <div class="grid-2" style="grid-template-columns:1fr 2fr">
-    <div class="section-box">
-      <div class="section-title">新規/リピート購入比率</div>
-      <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
-    </div>
+  <div class="grid-2" style="grid-template-columns:2fr 1fr">
     <div class="section-box">
       <div class="section-title">売上KPIツリー</div>
       <div id="salesTreeWrap" style="overflow-x:auto"></div>
+    </div>
+    <div class="section-box">
+      <div class="section-title">新規/リピート購入比率</div>
+      <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
     </div>
   </div>
   <div class="section-box">
@@ -4788,20 +4788,41 @@ function renderSalesTab() {
   renderProductMonthly();
 }
 
+// 商品名→管理番号のクロスマッチマップ（allItemとrppItemの管理番号体系が異なるため）
+const productCrossMap = {}; // rppManageNum → allItemManageNum
+function buildProductCrossMap() {
+  // allItemByMonthの商品名→manageNumマップ
+  const allItemNameMap = {};
+  D.months.forEach(ym => {
+    (D.allItemByMonth[ym] || []).forEach(r => {
+      if (r.name && r.manageNum) allItemNameMap[r.name] = r.manageNum;
+    });
+  });
+  // rppItemByMonthの商品名→manageNumマップ → allItem側のmanageNumとクロス
+  D.months.forEach(ym => {
+    (D.rppItemByMonth[ym] || []).forEach(r => {
+      if (r.manageNum && r.name && allItemNameMap[r.name]) {
+        productCrossMap[r.manageNum] = allItemNameMap[r.name];
+      }
+    });
+  });
+  console.log('[productCrossMap] ' + Object.keys(productCrossMap).length + ' cross-mappings');
+}
+
 function initProductSelector() {
   const pSel = document.getElementById('productItemSelect');
   if (!pSel || pSel.options.length > 1) return;
+  buildProductCrossMap();
+  // allItemByMonthの商品を主軸にする
   const productMap = {};
   D.months.forEach(ym => {
     (D.allItemByMonth[ym] || []).forEach(r => {
       const key = r.manageNum || r.name;
       if (key && !productMap[key]) productMap[key] = r.name || r.manageNum || key;
-      if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
     });
     (D.rppItemByMonth[ym] || []).forEach(r => {
       const key = r.manageNum || r.name;
       if (key && !productMap[key]) productMap[key] = r.name || key;
-      if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
     });
   });
   if (D.masterProducts) {
@@ -4826,6 +4847,12 @@ function renderProductMonthly() {
     wrap.innerHTML = '<div class="no-data">商品を選択してください</div>';
     return;
   }
+
+  // クロスマッチ: selected がRPP側manageNumなら allItem側manageNumも検索対象に
+  const crossMn = productCrossMap[selected] || '';
+  // 逆引き: selected がallItem側manageNumなら RPP側manageNumも検索対象に
+  const reverseCrossMn = Object.entries(productCrossMap).find(([k, v]) => v === selected)?.[0] || '';
+  const matchItem = (r) => r.manageNum === selected || r.name === selected || (crossMn && r.manageNum === crossMn) || (reverseCrossMn && r.manageNum === reverseCrossMn);
 
   const pDateFrom = document.getElementById('productDateFrom').value;
   const pDateTo = document.getElementById('productDateTo').value;
@@ -4887,9 +4914,9 @@ function renderProductMonthly() {
     let allItems = [];
     let allRppItems = [];
     filteredMonths.forEach(ym => {
-      const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      const items = (D.allItemByMonth[ym] || []).filter(matchItem);
       allItems.push(...items);
-      const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      const rppItems = (D.rppItemByMonth[ym] || []).filter(matchItem);
       // Filter RPP items by exact date range
       rppItems.forEach(r => {
         if (r.date && r.date >= pDateFrom && r.date <= pDateTo) {
@@ -4920,8 +4947,8 @@ function renderProductMonthly() {
     const months = D.months.slice().reverse(); // chronological
 
     const monthMetrics = months.map(ym => {
-      const items = (D.allItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
-      const rppItems = (D.rppItemByMonth[ym] || []).filter(r => r.manageNum === selected || r.name === selected);
+      const items = (D.allItemByMonth[ym] || []).filter(matchItem);
+      const rppItems = (D.rppItemByMonth[ym] || []).filter(matchItem);
       return calcMetrics(items, rppItems);
     });
 
@@ -4956,11 +4983,18 @@ function renderProductMonthly() {
   }
 }
 
+function getAllMonthData(dataByMonth) {
+  // 月次集計データ（日付なし）は全期間を返す
+  const all = [];
+  Object.values(dataByMonth || {}).forEach(arr => all.push(...arr));
+  return all;
+}
 function renderAdsTab() {
   const rppData = getMonthData(D.rppByMonth, currentMonth);
-  const tdaData = getMonthData(D.tdaByMonth, currentMonth);
-  const adData = getMonthData(D.adByMonth, currentMonth);
-  const cpaData = getMonthData(D.cpaByMonth || {}, currentMonth);
+  // 月次集計シート（TDA/楽天広告/CPA）は日付フィルタ不適用 - 全データ表示
+  const tdaData = getAllMonthData(D.tdaByMonth);
+  const adData = getAllMonthData(D.adByMonth);
+  const cpaData = getAllMonthData(D.cpaByMonth || {});
   const rppItemData = getMonthData(D.rppItemByMonth, currentMonth);
   const rppKwData = getMonthData(D.rppKwByMonth, currentMonth);
 
@@ -5034,7 +5068,7 @@ function renderAdsTab() {
   document.getElementById('rppKpiRow').innerHTML =
     '<div class="table-wrap"><table><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
     makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders) +
-    makeRow('商品別(全体−KW)', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders) +
+    makeRow('商品別', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders) +
     makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal) +
     '</tbody></table></div>';
 
@@ -5084,30 +5118,48 @@ function renderAdsTab() {
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
   ], rppItems, { limit: 50 });
 
-  // RPP KW table - キーワードごとに集計
-  const rppKwAgg = {};
+  // RPP KW table - 商品ごとにKWをグループ表示
+  const rppKwByProd = {};
   rppKwData.forEach(r => {
-    const k = r.kw || '不明';
-    if (!rppKwAgg[k]) rppKwAgg[k] = { kw: k, name: r.name || '', spend: 0, sales: 0, clicks: 0, orders: 0 };
-    rppKwAgg[k].spend += r.spend; rppKwAgg[k].sales += r.sales;
-    rppKwAgg[k].clicks += r.clicks; rppKwAgg[k].orders += r.orders;
+    const prod = r.name || r.manageNum || '不明';
+    if (!rppKwByProd[prod]) rppKwByProd[prod] = { name: prod, totalSpend: 0, totalSales: 0, totalClicks: 0, totalOrders: 0, kws: {} };
+    rppKwByProd[prod].totalSpend += r.spend; rppKwByProd[prod].totalSales += r.sales;
+    rppKwByProd[prod].totalClicks += r.clicks; rppKwByProd[prod].totalOrders += r.orders;
+    const kw = r.kw || '不明';
+    if (!rppKwByProd[prod].kws[kw]) rppKwByProd[prod].kws[kw] = { kw, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    rppKwByProd[prod].kws[kw].spend += r.spend; rppKwByProd[prod].kws[kw].sales += r.sales;
+    rppKwByProd[prod].kws[kw].clicks += r.clicks; rppKwByProd[prod].kws[kw].orders += r.orders;
   });
-  const rppKwRows = Object.values(rppKwAgg).map(r => ({
-    ...r,
-    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
-    cvr: r.clicks > 0 ? Math.round(r.orders / r.clicks * 10000) / 100 : 0,
-    cpc: r.clicks > 0 ? Math.round(r.spend / r.clicks) : 0,
-  })).sort((a, b) => b.spend - a.spend);
-  buildTable('rppKwTableWrap', [
-    { key: 'kw', label: 'キーワード', fmt: v => safe(String(v).substring(0, 40)) },
-    { key: 'name', label: '商品', fmt: v => safe(String(v).substring(0, 30)) },
-    { key: 'spend', label: '費用', fmt: v => yen(v) },
-    { key: 'sales', label: '売上', fmt: v => yen(v) },
-    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
-    { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
-    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
-    { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
-  ], rppKwRows, { limit: 80 });
+  const rppKwRows = [];
+  Object.values(rppKwByProd).sort((a, b) => b.totalSpend - a.totalSpend).forEach(prod => {
+    // Product header row
+    rppKwRows.push({ isHeader: true, name: prod.name, kw: '', spend: prod.totalSpend, sales: prod.totalSales, clicks: prod.totalClicks, orders: prod.totalOrders,
+      roas: prod.totalSpend > 0 ? Math.round(prod.totalSales / prod.totalSpend * 100) : 0,
+      cvr: prod.totalClicks > 0 ? Math.round(prod.totalOrders / prod.totalClicks * 10000) / 100 : 0,
+      cpc: prod.totalClicks > 0 ? Math.round(prod.totalSpend / prod.totalClicks) : 0 });
+    // KW rows sorted by spend
+    Object.values(prod.kws).sort((a, b) => b.spend - a.spend).forEach(kw => {
+      rppKwRows.push({ isHeader: false, name: '', kw: kw.kw, spend: kw.spend, sales: kw.sales, clicks: kw.clicks, orders: kw.orders,
+        roas: kw.spend > 0 ? Math.round(kw.sales / kw.spend * 100) : 0,
+        cvr: kw.clicks > 0 ? Math.round(kw.orders / kw.clicks * 10000) / 100 : 0,
+        cpc: kw.clicks > 0 ? Math.round(kw.spend / kw.clicks) : 0 });
+    });
+  });
+  // Custom table rendering for grouped KW display
+  const kwEl = document.getElementById('rppKwTableWrap');
+  if (rppKwRows.length === 0) { kwEl.innerHTML = '<div class="no-data">データなし</div>'; }
+  else {
+    let kwHtml = '<div class="table-wrap"><table><thead><tr><th style="text-align:left">商品 / キーワード</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>';
+    rppKwRows.forEach(r => {
+      if (r.isHeader) {
+        kwHtml += '<tr style="background:#f0f4ff;font-weight:600"><td style="text-align:left">' + safe(String(r.name).substring(0, 45)) + '</td><td>' + yen(r.spend) + '</td><td>' + yen(r.sales) + '</td><td>' + comma(r.clicks) + '</td><td>' + comma(r.orders) + '</td><td>' + yen(r.cpc) + '</td><td>' + pct(r.cvr) + '</td><td>' + r.roas + '%</td></tr>';
+      } else {
+        kwHtml += '<tr><td style="text-align:left;padding-left:24px;color:#555">' + safe(r.kw) + '</td><td>' + yen(r.spend) + '</td><td>' + yen(r.sales) + '</td><td>' + comma(r.clicks) + '</td><td>' + comma(r.orders) + '</td><td>' + yen(r.cpc) + '</td><td>' + pct(r.cvr) + '</td><td>' + r.roas + '%</td></tr>';
+      }
+    });
+    kwHtml += '</tbody></table></div>';
+    kwEl.innerHTML = kwHtml;
+  }
 
   // TDA
   const tdaTotalOrders = sumField(tdaData, 'orders');
