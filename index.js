@@ -4437,10 +4437,8 @@ D.months.forEach(ym => {
   opt.value = ym; opt.textContent = D.monthLabels[ym] || ym;
   monthSelect.appendChild(opt);
 });
-if (D.months.length > 0) {
-  monthSelect.value = D.months[0]; // default to latest month
-  currentMonth = D.months[0];
-}
+// Default month filter to 'all' (全期間) for ads/CRM tabs
+monthSelect.value = 'all';
 
 // ── Compare month calculation ──
 function getCompareMonth(ym, mode) {
@@ -4930,16 +4928,17 @@ function getAllMonthData(dataByMonth) {
   return all;
 }
 function renderAdsTab() {
-  const rppData = getMonthData(D.rppByMonth, currentMonth);
-  // 月次集計シート: currentMonthでフィルタ（'all'なら全期間）
-  const tdaData = D.tdaByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.tdaByMonth) : []);
-  const adData = D.adByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.adByMonth) : []);
-  const cpaData = (D.cpaByMonth || {})[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.cpaByMonth || {}) : []);
-  const rppItemData = getMonthData(D.rppItemByMonth, currentMonth);
+  const adMonth = document.getElementById('monthFilter').value || 'all';
+  const rppData = getMonthData(D.rppByMonth, adMonth);
+  // 月次集計シート: adMonthでフィルタ（'all'なら全期間）
+  const tdaData = D.tdaByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.tdaByMonth) : []);
+  const adData = D.adByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.adByMonth) : []);
+  const cpaData = (D.cpaByMonth || {})[adMonth] || (adMonth === 'all' ? getAllMonthData(D.cpaByMonth || {}) : []);
+  const rppItemData = getMonthData(D.rppItemByMonth, adMonth);
   // rpp_kw_raw: 月フィルター
-  const rppKwData = D.rppKwByMonth[currentMonth] || (currentMonth === 'all' ? getAllMonthData(D.rppKwByMonth) : []);
+  const rppKwData = D.rppKwByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.rppKwByMonth) : []);
 
-  const cmpYm = getCompareMonth(currentMonth, compareMode);
+  const cmpYm = getCompareMonth(adMonth, compareMode);
 
   const rppSpend = sumField(rppData, 'spend');
   const rppSales = sumField(rppData, 'sales');
@@ -4971,7 +4970,7 @@ function renderAdsTab() {
   }
 
   // TACOS = 広告費 / 全体売上
-  const storeSalesData = getMonthData(D.allByMonth, currentMonth);
+  const storeSalesData = getMonthData(D.allByMonth, adMonth);
   const storeTotalSales = sumField(storeSalesData, 'sales');
   const tacos = storeTotalSales > 0 ? (totalSpend / storeTotalSales * 100) : 0;
 
@@ -5205,7 +5204,7 @@ function renderAdsTab() {
   ], cpaRows, { limit: 30 });
 
   // アフィリエイト
-  const afiData = getMonthData(D.afiByMonth, currentMonth);
+  const afiData = getMonthData(D.afiByMonth, adMonth);
   const afiTotalSales = sumField(afiData, 'sales');
   const afiTotalReward = sumField(afiData, 'reward');
   document.getElementById('afiKpiRow').innerHTML = [
@@ -5244,7 +5243,8 @@ function renderAdsTab() {
 }
 
 function renderAcqTab() {
-  const lineData = getMonthData(D.lineByMonth, currentMonth);
+  const crmMonth = document.getElementById('monthFilter').value || 'all';
+  const lineData = getMonthData(D.lineByMonth, crmMonth);
 
   // LINE KPIs
   const lineTotalSent = sumField(lineData, 'sent');
@@ -5335,7 +5335,7 @@ function renderAcqTab() {
 
   // Mail KPIs + table - 月フィルター適用
   const allMailData = D.mailParsed || [];
-  const mailData = currentMonth === 'all' ? allMailData : allMailData.filter(r => r.date === currentMonth);
+  const mailData = crmMonth === 'all' ? allMailData : allMailData.filter(r => r.date === crmMonth);
   const mailTotalSent = sumField(mailData, 'sent');
   const mailTotalOpened = sumField(mailData, 'opened');
   const mailTotalClicks = sumField(mailData, 'clicks');
@@ -6102,6 +6102,21 @@ function renderAll() {
 // ── Event handlers ──
 
 // Main tabs
+function updateFilterUI(tabId) {
+  const monthTabs = ['tab-ads', 'tab-acq'];
+  const noFilterTabs = ['tab-customer'];
+  const mf = document.getElementById('monthFilter');
+  const df = document.getElementById('dayFilterFrom');
+  const dt = document.getElementById('dayFilterTo');
+  const ds = document.getElementById('dayFilterSep');
+  if (monthTabs.includes(tabId)) {
+    mf.style.display = ''; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
+  } else if (noFilterTabs.includes(tabId)) {
+    mf.style.display = 'none'; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
+  } else {
+    mf.style.display = 'none'; df.style.display = ''; dt.style.display = ''; ds.style.display = '';
+  }
+}
 document.querySelectorAll('.main-tab').forEach(tab => {
   tab.addEventListener('click', function() {
     document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
@@ -6109,6 +6124,7 @@ document.querySelectorAll('.main-tab').forEach(tab => {
     this.classList.add('active');
     const target = document.getElementById(this.dataset.tab);
     if (target) target.classList.add('active');
+    updateFilterUI(this.dataset.tab);
   });
 });
 
