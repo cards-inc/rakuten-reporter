@@ -105,6 +105,12 @@ functions.http('fetchRppReport', async (req, res) => {
 
     const page = await browser.newPage();
 
+    // ヘッドレス検知回避: User-Agent設定 & webdriver非表示
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
     // ダウンロード先設定
     const cdp = await page.createCDPSession();
     await cdp.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: DOWNLOAD_DIR });
@@ -154,8 +160,73 @@ functions.http('fetchRppReport', async (req, res) => {
     // Step 5: RPPレポートページへ遷移
     // ============================================================
     console.log('Step 5: RPPレポートページへ遷移...');
-    await page.goto('https://ad.rms.rakuten.co.jp/rpp/reports', { waitUntil: 'networkidle2', timeout: 30000 });
+    // まずRPPトップへアクセスしてセッション確立
+    await page.goto('https://ad.rms.rakuten.co.jp/rpp/top', { waitUntil: 'networkidle2', timeout: 30000 });
     await new Promise(r => setTimeout(r, 2000));
+    console.log('RPPトップURL:', page.url());
+
+    // system_error時 → メインメニュー経由で広告リンクを踏んでセッション確立
+    if (page.url().includes('system_error') || page.url().includes('auth=e') || page.url().includes('login_error')) {
+      console.log('RPP system_error → メインメニュー経由でセッション確立...');
+      const rppBody = await page.evaluate(() => document.body?.innerText?.substring(0, 500) || '');
+      console.log('RPP system_errorページ内容:', rppBody.substring(0, 300));
+
+      // メインメニューへ
+      await page.goto('https://mainmenu.rms.rakuten.co.jp/', { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000));
+
+      // メインメニューの全リンクをダンプ
+      const allLinks = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('a')).map(a => ({
+          text: (a.textContent || '').trim().substring(0, 60),
+          href: (a.href || '').substring(0, 120)
+        })).filter(l => l.href && !l.href.startsWith('javascript'));
+      });
+      console.log('メインメニューリンク数:', allLinks.length);
+      console.log('メインメニューリンク(抜粋):', JSON.stringify(allLinks.slice(0, 40)));
+
+      // メインメニューからRPP広告リンクをクリック
+      const adLink = await page.evaluate(() => {
+        for (const a of document.querySelectorAll('a')) {
+          const href = a.href || '';
+          const text = (a.textContent || '').trim();
+          if (href.includes('ad.rms.rakuten.co.jp') || text.includes('広告') || text.includes('RPP') || text.includes('プロモーション')) {
+            return { href, text: text.substring(0, 50) };
+          }
+        }
+        return null;
+      });
+      console.log('メインメニュー広告リンク:', JSON.stringify(adLink));
+
+      if (adLink && adLink.href) {
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {}),
+          page.evaluate((href) => { window.location.href = href; }, adLink.href),
+        ]);
+        await new Promise(r => setTimeout(r, 3000));
+        console.log('広告リンク遷移後URL:', page.url());
+      }
+
+      // RPPレポートページへ
+      if (!page.url().includes('/rpp/reports')) {
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/reports', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      console.log('RPPページ最終URL:', page.url());
+
+      // まだsystem_errorの場合、Cookie/ヘッダー情報をログ出力
+      if (page.url().includes('system_error')) {
+        const cookies = await page.cookies();
+        const adCookies = cookies.filter(c => c.domain.includes('ad.rms') || c.domain.includes('rms.rakuten'));
+        console.log(`RPP関連Cookie: ${adCookies.length}件 [${adCookies.map(c => c.name + '=' + c.value.substring(0, 20)).join(', ')}]`);
+        const errBody = await page.evaluate(() => document.body?.innerHTML?.substring(0, 1000) || '');
+        console.log('RPP system_error HTML:', errBody.substring(0, 500));
+      }
+    } else {
+      // トップからレポートページへ
+      await page.goto('https://ad.rms.rakuten.co.jp/rpp/reports', { waitUntil: 'networkidle2', timeout: 30000 });
+      await new Promise(r => setTimeout(r, 2000));
+    }
     console.log('RPPページURL:', page.url());
 
     // ============================================================
@@ -1094,12 +1165,58 @@ functions.http('fetchRppReport', async (req, res) => {
       const ddHtml = await page.evaluate(() => document.body?.innerHTML?.substring(0, 2000) || '');
       console.log('データダウンロードHTML:', ddHtml.substring(0, 600));
 
-      // 認証エラーの場合
-      if (ddUrl.includes('login_error') || ddUrl.includes('glogin') || ddBody.includes('認証エラー') || ddBody.includes('再度ログイン') || ddBody.includes('ログインし直してください') || ddBody.includes('サービス別権限設定')) {
-        console.log('datatool認証エラー');
-        additionalResults.push({ sheet: 'all_raw', status: 'auth_failed', message: 'datatool認証エラー - R-Loginのサービス別権限設定を確認してください' });
-        additionalResults.push({ sheet: 'all_item_raw', status: 'auth_failed', message: 'datatool認証エラー' });
-        throw new Error('datatool認証エラー - サービス別権限設定を確認');
+      // 認証エラーの場合 → 再ログインしてリトライ
+      if (ddUrl.includes('login_error') || ddUrl.includes('glogin') || ddUrl.includes('app_login_error') || ddBody.includes('認証エラー') || ddBody.includes('再度ログイン') || ddBody.includes('ログインし直してください') || ddBody.includes('サービス別権限設定')) {
+        console.log('datatool認証エラー検出 → 再ログイン試行...');
+        // RMSに再ログイン
+        await page.goto(RMS_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        await page.evaluate((u, p) => {
+          const loginId = document.querySelector('input[name="login_id"]') || document.querySelector('#loginInner_u');
+          const password = document.querySelector('input[name="passwd"]') || document.querySelector('#loginInner_p');
+          if (loginId) loginId.value = u;
+          if (password) password.value = p;
+        }, rmsUser, rmsPass);
+        const dtSubmit = await page.$('input[type="submit"], button[type="submit"]');
+        if (dtSubmit) await dtSubmit.click();
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 3000));
+        // 楽天会員ログイン
+        if (page.url().includes('login.account.rakuten.com')) {
+          console.log('楽天会員ログインページ → 再認証...');
+          await page.evaluate((u) => {
+            const inp = document.querySelector('#user_id') || document.querySelector('input[name="username"]');
+            if (inp) { inp.value = u; inp.dispatchEvent(new Event('input', {bubbles: true})); }
+          }, rmsUser);
+          const nextBtn = await page.$('#cta001');
+          if (nextBtn) await nextBtn.click();
+          await new Promise(r => setTimeout(r, 5000));
+          if (rakutenPass) {
+            await page.evaluate((p) => {
+              const inp = document.querySelector('#password_current') || document.querySelector('input[type="password"]');
+              if (inp) { inp.value = p; inp.dispatchEvent(new Event('input', {bubbles: true})); }
+            }, rakutenPass);
+            const loginBtn = await page.$('#cta002') || await page.$('button[type="submit"]');
+            if (loginBtn) await loginBtn.click();
+            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+            await new Promise(r => setTimeout(r, 3000));
+          }
+        }
+        console.log('datatool再ログイン後URL:', page.url());
+        // datatoolに再遷移
+        await page.goto('https://datatool.rms.rakuten.co.jp/datadownload/', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 3000));
+        const ddUrl2 = page.url();
+        console.log('datatool再遷移URL:', ddUrl2);
+        ddBody = await page.evaluate(() => document.body?.innerText?.substring(0, 800) || '');
+        console.log('datatool再遷移内容:', ddBody.substring(0, 400));
+        // それでもダメなら諦める
+        if (ddUrl2.includes('login_error') || ddUrl2.includes('app_login_error') || ddBody.includes('認証エラー') || ddBody.includes('サービス別権限設定')) {
+          console.log('datatool再ログイン後も認証エラー');
+          additionalResults.push({ sheet: 'all_raw', status: 'auth_failed', message: 'datatool認証エラー - R-Loginのサービス別権限設定を確認してください' });
+          additionalResults.push({ sheet: 'all_item_raw', status: 'auth_failed', message: 'datatool認証エラー' });
+          throw new Error('datatool認証エラー - サービス別権限設定を確認');
+        }
       }
 
       // 全てのタブ・リンクをログ
@@ -2675,16 +2792,26 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
 
       if (loginEmail) {
         try {
-          await page.waitForSelector('input[type="text"], input[type="email"], input[name="u"], input[name="username"]', { timeout: 10000 });
-          const emailInput = await page.$('input[type="text"], input[type="email"], input[name="u"], input[name="username"]');
-          if (emailInput) {
-            await emailInput.click({ clickCount: 3 });
-            await emailInput.type(loginEmail, { delay: 30 });
-          }
-          // ログインボタンをクリック（Enter代わり）
+          await page.waitForSelector('input[type="text"], input[type="email"], input[name="u"], input[name="username"], #user_id', { timeout: 10000 });
+          // React SPA対応: nativeInputValueSetterで値を設定
+          await page.evaluate((email) => {
+            const inp = document.querySelector('#user_id') || document.querySelector('input[name="username"]') || document.querySelector('input[type="text"]');
+            if (inp) {
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(inp, email);
+              inp.dispatchEvent(new Event('input', { bubbles: true }));
+              inp.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }, loginEmail);
+          await new Promise(r => setTimeout(r, 500));
+          // ログインボタンをクリック（複数のセレクター候補）
           const loginBtn2a = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-            for (const b of btns) {
+            // IDで探す（楽天のログインボタン）
+            const byId = document.querySelector('#cta001') || document.querySelector('#loginInner_u_submit');
+            if (byId) { byId.click(); return byId.id || byId.textContent?.trim(); }
+            // role="button"やdata属性で探す
+            const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a.c-btn'));
+            for (const b of allBtns) {
               const txt = (b.textContent || b.value || '').trim();
               if (txt.includes('次へ') || txt.includes('ログイン') || txt.includes('Sign in') || txt.includes('Next') || b.type === 'submit') {
                 b.click();
@@ -2694,11 +2821,24 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
             return null;
           });
           console.log('Step 2a: ボタンクリック:', loginBtn2a);
-          if (!loginBtn2a) await page.keyboard.press('Enter');
-          await new Promise(r => setTimeout(r, 3000));
+          if (!loginBtn2a) {
+            // フォールバック: Enterキーでsubmit
+            const inp = await page.$('#user_id') || await page.$('input[name="username"]');
+            if (inp) { await inp.focus(); await page.keyboard.press('Enter'); }
+          }
+          await new Promise(r => setTimeout(r, 5000));
           console.log('Step 2a: メール送信後URL:', page.url());
           const after2aContent = await page.evaluate(() => document.body?.innerText?.substring(0, 300) || '');
           console.log('Step 2a: メール送信後内容:', after2aContent.substring(0, 200));
+
+          // 全ボタン/リンクをダンプ
+          const allBtns2a = await page.evaluate(() => {
+            return Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a')).map(b => ({
+              tag: b.tagName, id: b.id || '', text: (b.textContent || b.value || '').trim().substring(0, 40),
+              cls: (b.className || '').substring(0, 40)
+            })).filter(b => b.text || b.id).slice(0, 20);
+          });
+          console.log('Step 2a ボタン一覧:', JSON.stringify(allBtns2a.slice(0, 10)));
 
           // パスワード入力を待つ
           let passField = await page.$('input[type="password"]');
@@ -2710,14 +2850,25 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
 
           console.log('Step 2b: 楽天会員パスワード入力...', 'PW長さ:', rakutenPass?.length, 'field:', !!passField);
           if (passField && rakutenPass) {
-            await passField.click();
-            await passField.type(rakutenPass, { delay: 30 });
+            // React SPA対応でパスワードも入力
+            await page.evaluate((pw) => {
+              const inp = document.querySelector('input[type="password"]');
+              if (inp) {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(inp, pw);
+                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }, rakutenPass);
+            await new Promise(r => setTimeout(r, 500));
             // ログインボタンをクリック
             const loginBtn2b = await page.evaluate(() => {
-              const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+              const byId = document.querySelector('#cta011') || document.querySelector('#cta002') || document.querySelector('#loginInner_p_submit');
+              if (byId) { byId.click(); return byId.id || byId.textContent?.trim(); }
+              const btns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a.c-btn'));
               for (const b of btns) {
                 const txt = (b.textContent || b.value || '').trim();
-                if (txt.includes('次へ') || txt.includes('ログイン') || txt.includes('Sign in') || txt.includes('送信') || b.type === 'submit') {
+                if (txt === 'ログイン' || txt === '次へ' || txt.includes('Sign in') || txt.includes('送信') || b.type === 'submit') {
                   b.click();
                   return txt || b.type;
                 }

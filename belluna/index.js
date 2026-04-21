@@ -35,7 +35,7 @@ const COLUMNS_KW = [
 // Cloud Function エントリポイント
 // ============================
 const functions = require('@google-cloud/functions-framework');
-functions.http('fetchRppReport', async (req, res) => {
+functions.http('fetchBellunaReport', async (req, res) => {
   // ダッシュボードモード
   if (req.query.mode === 'dashboard') {
     try {
@@ -81,9 +81,9 @@ functions.http('fetchRppReport', async (req, res) => {
     const adOnly = req.query.ad_only === '1';
     // ad_targets=ad_raw,tda_raw で取得対象の広告シートをカンマ区切り指定（ad_onlyより優先）
     const adTargets = req.query.ad_targets ? req.query.ad_targets.split(',').map(s => s.trim()) : null;
-    const rmsUser = process.env.RMS_LOGIN_ID;
-    const rmsPass = process.env.RMS_PASSWORD;
-    const rakutenPass = process.env.RMS_2FA_PASSWORD;
+    const rmsUser = process.env.BELLUNA_RMS_LOGIN_ID || process.env.RMS_LOGIN_ID;
+    const rmsPass = process.env.BELLUNA_RMS_PASSWORD || process.env.RMS_PASSWORD;
+    const rakutenPass = process.env.BELLUNA_RMS_2FA_PASSWORD || process.env.RMS_2FA_PASSWORD;
 
     if (!rmsUser || !rmsPass) {
       throw new Error('RMS_LOGIN_ID / RMS_PASSWORD が未設定です');
@@ -104,6 +104,12 @@ functions.http('fetchRppReport', async (req, res) => {
     });
 
     const page = await browser.newPage();
+
+    // ヘッドレス検知回避: User-Agent設定 & webdriver非表示
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36');
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
 
     // ダウンロード先設定
     const cdp = await page.createCDPSession();
@@ -1627,7 +1633,7 @@ functions.http('fetchRppReport', async (req, res) => {
           });
           if (needsStep2) {
             console.log('afi: 楽天会員ログイン(Step2)が必要');
-            const rakutenEmail = process.env.RMS_2FA_EMAIL;
+            const rakutenEmail = process.env.BELLUNA_RMS_2FA_EMAIL || process.env.RMS_2FA_EMAIL;
             if (rakutenEmail && rakutenPass) {
               // ユーザー名入力
               const userInput = await afiPage.evaluate(() => {
@@ -2484,7 +2490,7 @@ function processDownload(dl) {
 // ログイン処理
 // ============================
 async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) {
-  const rakutenEmail = process.env.RMS_2FA_EMAIL;
+  const rakutenEmail = process.env.BELLUNA_RMS_2FA_EMAIL || process.env.RMS_2FA_EMAIL;
 
   if (!skipLogout) {
     console.log('Step 0: 既存セッションのログアウト...');
@@ -2675,16 +2681,24 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
 
       if (loginEmail) {
         try {
-          await page.waitForSelector('input[type="text"], input[type="email"], input[name="u"], input[name="username"]', { timeout: 10000 });
-          const emailInput = await page.$('input[type="text"], input[type="email"], input[name="u"], input[name="username"]');
-          if (emailInput) {
-            await emailInput.click({ clickCount: 3 });
-            await emailInput.type(loginEmail, { delay: 30 });
-          }
-          // ログインボタンをクリック（Enter代わり）
+          await page.waitForSelector('input[type="text"], input[type="email"], input[name="u"], input[name="username"], #user_id', { timeout: 10000 });
+          // React SPA対応: nativeInputValueSetterで値を設定
+          await page.evaluate((email) => {
+            const inp = document.querySelector('#user_id') || document.querySelector('input[name="username"]') || document.querySelector('input[type="text"]');
+            if (inp) {
+              const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+              nativeSetter.call(inp, email);
+              inp.dispatchEvent(new Event('input', { bubbles: true }));
+              inp.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }, loginEmail);
+          await new Promise(r => setTimeout(r, 500));
+          // ログインボタンをクリック（複数のセレクター候補）
           const loginBtn2a = await page.evaluate(() => {
-            const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-            for (const b of btns) {
+            const byId = document.querySelector('#cta001') || document.querySelector('#loginInner_u_submit');
+            if (byId) { byId.click(); return byId.id || byId.textContent?.trim(); }
+            const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a.c-btn'));
+            for (const b of allBtns) {
               const txt = (b.textContent || b.value || '').trim();
               if (txt.includes('次へ') || txt.includes('ログイン') || txt.includes('Sign in') || txt.includes('Next') || b.type === 'submit') {
                 b.click();
@@ -2694,8 +2708,11 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
             return null;
           });
           console.log('Step 2a: ボタンクリック:', loginBtn2a);
-          if (!loginBtn2a) await page.keyboard.press('Enter');
-          await new Promise(r => setTimeout(r, 3000));
+          if (!loginBtn2a) {
+            const inp = await page.$('#user_id') || await page.$('input[name="username"]');
+            if (inp) { await inp.focus(); await page.keyboard.press('Enter'); }
+          }
+          await new Promise(r => setTimeout(r, 5000));
           console.log('Step 2a: メール送信後URL:', page.url());
           const after2aContent = await page.evaluate(() => document.body?.innerText?.substring(0, 300) || '');
           console.log('Step 2a: メール送信後内容:', after2aContent.substring(0, 200));
@@ -2710,14 +2727,25 @@ async function doLogin(page, rmsUser, rmsPass, rakutenPass, skipLogout = false) 
 
           console.log('Step 2b: 楽天会員パスワード入力...', 'PW長さ:', rakutenPass?.length, 'field:', !!passField);
           if (passField && rakutenPass) {
-            await passField.click();
-            await passField.type(rakutenPass, { delay: 30 });
+            // React SPA対応でパスワードも入力
+            await page.evaluate((pw) => {
+              const inp = document.querySelector('input[type="password"]');
+              if (inp) {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(inp, pw);
+                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }, rakutenPass);
+            await new Promise(r => setTimeout(r, 500));
             // ログインボタンをクリック
             const loginBtn2b = await page.evaluate(() => {
-              const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+              const byId = document.querySelector('#cta011') || document.querySelector('#cta002') || document.querySelector('#loginInner_p_submit');
+              if (byId) { byId.click(); return byId.id || byId.textContent?.trim(); }
+              const btns = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"], a.c-btn'));
               for (const b of btns) {
                 const txt = (b.textContent || b.value || '').trim();
-                if (txt.includes('次へ') || txt.includes('ログイン') || txt.includes('Sign in') || txt.includes('送信') || b.type === 'submit') {
+                if (txt === 'ログイン' || txt === '次へ' || txt.includes('Sign in') || txt.includes('送信') || b.type === 'submit') {
                   b.click();
                   return txt || b.type;
                 }
