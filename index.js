@@ -3559,41 +3559,58 @@ async function fetchOrdersFromRmsApi(query) {
 async function fetchRakutenEvents() {
   const https = require('https');
 
-  // calendar.rakuten.co.jp のイベント検索（お買物イベント ec=1600）
-  const url = 'https://calendar.rakuten.co.jp/search/evt?ec=1600';
+  function fetchPage(url) {
+    return new Promise((resolve) => {
+      https.get(url, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try {
+            const match = data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+            if (!match) { resolve([]); return; }
+            const nextData = JSON.parse(match[1]);
+            const events = nextData?.props?.pageProps?.data?.eventSearchResponse?.data?.event_searches || [];
+            resolve(events.map(e => ({
+              id: e.event_id,
+              title: e.cal_event?.event_title || '',
+              startDate: e.view_start_date || '',
+              endDate: e.view_end_date || '',
+            })));
+          } catch (e) { resolve([]); }
+        });
+      }).on('error', () => resolve([]));
+    });
+  }
 
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          // __NEXT_DATA__ JSONを抽出
-          const match = data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-          if (!match) { resolve([]); return; }
-          const nextData = JSON.parse(match[1]);
-          const events = nextData?.props?.pageProps?.data?.eventSearchResponse?.data?.event_searches || [];
-          const parsed = events.map(e => ({
-            id: e.event_id,
-            title: e.cal_event?.event_title || '',
-            startDate: e.view_start_date || '',
-            endDate: e.view_end_date || '',
-            category: e.cal_event_category?.category_name || '',
-            url: e.cal_event?.reference_url || '',
-            interval: e.cal_event?.event_interval || 0,
-          }));
-          resolve(parsed);
-        } catch (e) { resolve([]); }
-      });
-    }).on('error', () => resolve([]));
-  });
+  // 過去12ヶ月＋今月＋来月の範囲で月別取得
+  const now = new Date();
+  const allEvents = [];
+  const seen = new Set();
+  const months = [];
+  for (let offset = -12; offset <= 1; offset++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  for (const ym of months) {
+    const [y, m] = ym.split('-');
+    const url = `https://calendar.rakuten.co.jp/search/evt?ec=1600&y=${y}&m=${parseInt(m)}`;
+    const events = await fetchPage(url);
+    events.forEach(e => {
+      const key = e.id || (e.title + e.startDate);
+      if (!seen.has(key)) { seen.add(key); allEvents.push(e); }
+    });
+  }
+
+  console.log(`fetchRakutenEvents: ${allEvents.length} events from ${months[0]} to ${months[months.length - 1]}`);
+  return allEvents;
 }
 
 // ============================
 // ダッシュボード HTML生成
 // ============================
 async function generateDashboardHtml() {
-  const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'] });
+  const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
   const sheets = google.sheets({ version: 'v4', auth });
 
   // ── ヘルパー ──
@@ -4260,11 +4277,30 @@ async function generateDashboardHtml() {
   });
   const afiByRateRows = Object.values(afiByRate).sort((a, b) => b.sales - a.sales);
 
-  // ── 楽天イベントカレンダー取得 ──
+  // ── 楽天イベントカレンダー取得 → シートに保存 ──
   let rakutenEvents = [];
   try {
     rakutenEvents = await fetchRakutenEvents();
     console.log(`Dashboard: ${rakutenEvents.length} Rakuten events fetched`);
+    // event_calendarシートに書き込み
+    if (rakutenEvents.length > 0) {
+      const evtHeaders = ['イベントID', 'イベント名', '開始日', '終了日'];
+      const evtRows = rakutenEvents.map(e => [
+        e.id || '', e.title || '', (e.startDate || '').substring(0, 10), (e.endDate || '').substring(0, 10)
+      ]);
+      const evtValues = [evtHeaders, ...evtRows];
+      try {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SPREADSHEET_ID,
+          range: 'event_calendar!A1',
+          valueInputOption: 'RAW',
+          requestBody: { values: evtValues },
+        });
+        console.log(`Dashboard: event_calendar sheet updated with ${evtRows.length} events`);
+      } catch (e2) {
+        console.log(`Dashboard: event_calendar sheet write error: ${e2.message}`);
+      }
+    }
   } catch (e) {
     console.log(`Dashboard: event fetch error: ${e.message}`);
   }
@@ -4607,10 +4643,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="section-title">日別売上（RPP経由 / 広告外）</div>
     <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
   </div>
-  <div class="section-box" id="eventCalendarBox" style="display:none">
-    <div class="section-title">楽天イベントカレンダー</div>
-    <div id="eventListWrap"></div>
-  </div>
 </div>
 
 <!-- Tab: 商品別分析 -->
@@ -4636,7 +4668,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
   <div class="section-box" style="margin-top:20px">
     <div class="section-title">カテゴリ別実績</div>
-    <div id="categoryTableWrap" style="overflow-x:auto"></div>
+    <div id="categoryTableWrap"></div>
   </div>
   <div class="section-box" style="margin-top:20px">
     <div class="section-title">カテゴリ別 売上推移</div>
@@ -4902,16 +4934,13 @@ function destroyChart(id) {
 
 // ── Month filter population ──
 const monthSelect = document.getElementById('monthFilter');
-const optAll = document.createElement('option');
-optAll.value = 'all'; optAll.textContent = '全期間';
-monthSelect.appendChild(optAll);
 D.months.forEach(ym => {
   const opt = document.createElement('option');
   opt.value = ym; opt.textContent = D.monthLabels[ym] || ym;
   monthSelect.appendChild(opt);
 });
-// Default month filter to 'all' (全期間) for ads/CRM tabs
-monthSelect.value = 'all';
+// Default to latest month
+if (D.months.length > 0) monthSelect.value = D.months[D.months.length - 1];
 
 // ── Compare month calculation ──
 function getCompareMonth(ym, mode) {
@@ -5238,22 +5267,6 @@ function renderSalesTab() {
     });
   }
 
-  // ── イベントカレンダーリスト ──
-  const evtBox = document.getElementById('eventCalendarBox');
-  const evtWrap = document.getElementById('eventListWrap');
-  if (D.rakutenEvents && D.rakutenEvents.length > 0) {
-    evtBox.style.display = '';
-    const today = new Date().toISOString().substring(0, 10);
-    let evtHtml = '<table class="data-table"><thead><tr><th>イベント名</th><th>期間</th><th>状態</th></tr></thead><tbody>';
-    D.rakutenEvents.forEach(evt => {
-      const s = (evt.startDate || '').substring(0, 10);
-      const e = (evt.endDate || '').substring(0, 10);
-      const status = today < s ? '<span style="color:#1976d2">予定</span>' : (today > e ? '<span style="color:#999">終了</span>' : '<span style="color:#e65100;font-weight:600">開催中</span>');
-      evtHtml += '<tr><td>' + (evt.title || '') + '</td><td style="white-space:nowrap">' + s + ' ～ ' + e + '</td><td>' + status + '</td></tr>';
-    });
-    evtHtml += '</tbody></table>';
-    evtWrap.innerHTML = evtHtml;
-  }
 
 }
 
@@ -5446,35 +5459,21 @@ function renderCategoryTable() {
 
   const totalSales = rows.reduce((s, r) => s + r.sales, 0);
 
-  if (rows.length === 0) {
-    wrap.innerHTML = '<div class="no-data">カテゴリデータがありません</div>';
-    return;
-  }
+  const catRows = rows.map(r => ({
+    ...r,
+    share: totalSales > 0 ? (r.sales / totalSales * 100) : 0,
+  }));
 
-  let html = '<table class="data-table" id="categoryTable"><thead><tr>';
-  const cols = ['カテゴリ','商品数','売上','売上構成比','件数','アクセス','転換率','客単価'];
-  cols.forEach(c => html += '<th class="sortable">' + c + '</th>');
-  html += '</tr></thead><tbody>';
-  rows.forEach(r => {
-    const share = totalSales > 0 ? (r.sales / totalSales * 100) : 0;
-    html += '<tr><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + r.genre + '">' + r.genre + '</td>';
-    html += '<td class="num">' + comma(r.productCount) + '</td>';
-    html += '<td class="num">' + yen(r.sales) + '</td>';
-    html += '<td class="num">' + share.toFixed(1) + '%</td>';
-    html += '<td class="num">' + comma(r.orders) + '</td>';
-    html += '<td class="num">' + comma(r.access) + '</td>';
-    html += '<td class="num">' + r.cvr.toFixed(2) + '%</td>';
-    html += '<td class="num">' + yen(Math.round(r.unitPrice)) + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
-
-  // ソート
-  document.querySelectorAll('#categoryTable th.sortable').forEach((th, ci) => {
-    th.addEventListener('click', function() {
-      sortTable(document.getElementById('categoryTable'), ci, ci >= 1);
-    });
-  });
+  buildTable('categoryTableWrap', [
+    { key: 'genre', label: 'カテゴリ', fmt: v => safe(v) },
+    { key: 'productCount', label: '商品数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'share', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'access', label: 'アクセス', fmt: v => comma(v) },
+    { key: 'cvr', label: '転換率', fmt: v => v.toFixed(2) + '%' },
+    { key: 'unitPrice', label: '客単価', fmt: v => yen(Math.round(v)) },
+  ], catRows);
 
   // カテゴリ別売上推移チャート
   renderCategoryTrendChart(rows.slice(0, 8).map(r => r.genre));
