@@ -3666,30 +3666,6 @@ async function generateDashboardHtml() {
     .sort((a, b) => (a[0] === '5+' ? 999 : Number(a[0])) - (b[0] === '5+' ? 999 : Number(b[0])))
     .map(([units, count]) => ({ units, count }));
 
-  // Cohort LTV
-  const cohorts = {};
-  Object.entries(customerOrders).forEach(([email, ords]) => {
-    const sorted = [...ords].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const firstYM = toYM(sorted[0]?.date);
-    if (!firstYM) return;
-    if (!cohorts[firstYM]) cohorts[firstYM] = {};
-    const totalSpend = sorted.reduce((s, o) => s + o.price, 0);
-    cohorts[firstYM][email] = totalSpend;
-  });
-  const cohortLTVData = Object.entries(cohorts)
-    .map(([month, customers]) => {
-      const emails = Object.keys(customers);
-      const totalLTV = Object.values(customers).reduce((s, v) => s + v, 0);
-      const repeatCount = emails.filter(e => customerPurchaseCounts[e] >= 2).length;
-      return {
-        month,
-        customers: emails.length,
-        avgLTV: emails.length > 0 ? Math.round(totalLTV / emails.length) : 0,
-        f2Rate: emails.length > 0 ? Math.round(repeatCount / emails.length * 1000) / 10 : 0,
-      };
-    })
-    .sort((a, b) => a.month.localeCompare(b.month));
-
   // Purchase count price
   const purchaseCountPrice = {};
   Object.entries(customerOrders).forEach(([email, ords]) => {
@@ -3885,7 +3861,6 @@ async function generateDashboardHtml() {
       basketProducts,
     },
     ltvAnalysis: {
-      cohortLTV: cohortLTVData,
       purchaseCountPrice: purchaseCountPriceRows,
       firstItemLTV: firstItemLTVRows,
     },
@@ -4350,16 +4325,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="section-box">
         <div class="section-title">初回購入商品別 LTV・F2転換</div>
         <div id="ltvFirstItemTable"></div>
-      </div>
-      <div class="grid-2">
-        <div class="section-box">
-          <div class="section-title">コホート別 平均LTV</div>
-          <div class="chart-wrap chart-sm"><canvas id="chartCohortLTV"></canvas></div>
-        </div>
-        <div class="section-box">
-          <div class="section-title">コホート別 F2転換率</div>
-          <div class="chart-wrap chart-sm"><canvas id="chartCohortF2"></canvas></div>
-        </div>
       </div>
       <div class="section-box">
         <div class="section-title">購入回数別 累計金額</div>
@@ -5042,7 +5007,7 @@ function renderAdsTab() {
     return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
   };
   document.getElementById('rppKpiRow').innerHTML =
-    '<div class="table-wrap"><table><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
+    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:10%"><col style="width:15%"><col style="width:18%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:15%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
     makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders) +
     makeRow('商品別', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders) +
     makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal) +
@@ -5430,11 +5395,10 @@ function renderRepeatTab() {
 
   document.getElementById('repeatCards').innerHTML = [
     { label: '総顧客数', value: comma(totalCust) },
-    { label: '新規客', value: comma(firstTimersCnt) },
-    { label: 'リピーター', value: comma(repeatersCnt) },
-    { label: 'F2転換率', value: pct(f2RateVal) },
-    { label: 'リピート率', value: totalCust > 0 ? pct(repeatersCnt / totalCust * 100) : '0%' },
-  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+    { label: 'F1（初回購入）', value: comma(totalCust) },
+    { label: 'F2（2回目購入）', value: comma(repeatersCnt) },
+    { label: 'F2転換率', value: pct(f2RateVal), sub: 'F2÷F1' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + c.sub + '</div>' : '') + '</div>').join('');
 
   // Monthly NR - order_rawから算出
   const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m2 = s.match(/^(\\d{4})-(\\d{1,2})/); return m2 ? m2[1] + '-' + m2[2].padStart(2, '0') : ''; };
@@ -5654,7 +5618,7 @@ function renderLTVTab() {
   const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\\//g, '-'); const m = s.match(/^(\\d{4})-(\\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') : ''; };
 
   // If filtered, recompute LTV data for customers who bought that product
-  let cohortData, countPriceData, firstItemData;
+  let countPriceData, firstItemData;
 
   if (filterItem) {
     // Find customers who bought this item
@@ -5668,25 +5632,6 @@ function renderLTVTab() {
       if (!custOrd[r.e]) custOrd[r.e] = [];
       custOrd[r.e].push(r);
     });
-
-    // Cohort
-    const cohorts = {};
-    Object.entries(custOrd).forEach(([email, ords]) => {
-      const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
-      const firstYM = toYmClient(sorted[0]?.d);
-      if (!firstYM) return;
-      const totalSpend = sorted.reduce((s, o) => s + (o.p || 0), 0);
-      const uniqueOrders = [...new Set(sorted.map(o => o.n).filter(Boolean))].length || 1;
-      if (!cohorts[firstYM]) cohorts[firstYM] = { total: 0, count: 0, repeat: 0 };
-      cohorts[firstYM].total += totalSpend;
-      cohorts[firstYM].count++;
-      if (uniqueOrders >= 2) cohorts[firstYM].repeat++;
-    });
-    cohortData = Object.entries(cohorts).map(([m, v]) => ({
-      month: m, customers: v.count,
-      avgLTV: v.count > 0 ? Math.round(v.total / v.count) : 0,
-      f2Rate: v.count > 0 ? Math.round(v.repeat / v.count * 1000) / 10 : 0,
-    })).sort((a, b) => a.month.localeCompare(b.month));
 
     // Purchase count price
     const cntPrice = {};
@@ -5720,51 +5665,8 @@ function renderLTVTab() {
       f2Rate: r.count > 0 ? Math.round(r.repeatCount / r.count * 1000) / 10 : 0,
     })).sort((a, b) => b.avgLTV - a.avgLTV).slice(0, 30);
   } else {
-    cohortData = D.ltvAnalysis.cohortLTV;
     countPriceData = D.ltvAnalysis.purchaseCountPrice;
     firstItemData = D.ltvAnalysis.firstItemLTV;
-  }
-
-  // Cohort LTV chart
-  destroyChart('chartCohortLTV');
-  if (cohortData.length > 0) {
-    chartInstances['chartCohortLTV'] = new Chart(document.getElementById('chartCohortLTV'), {
-      type: 'bar',
-      data: {
-        labels: cohortData.map(r => D.monthLabels[r.month] || r.month),
-        datasets: [
-          { label: '平均LTV', data: cohortData.map(r => r.avgLTV), backgroundColor: 'rgba(26,58,92,0.7)', yAxisID: 'y' },
-          { label: '顧客数', data: cohortData.map(r => r.customers), type: 'line', borderColor: '#1a73e8', yAxisID: 'y1', tension: 0.3, pointRadius: 2 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.datasetIndex === 0 ? yen(ctx.raw) : comma(ctx.raw)) } } },
-        scales: {
-          y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
-          y1: { position: 'right', grid: { drawOnChartArea: false } }
-        }
-      }
-    });
-  }
-
-  // Cohort F2 chart
-  destroyChart('chartCohortF2');
-  if (cohortData.length > 0) {
-    chartInstances['chartCohortF2'] = new Chart(document.getElementById('chartCohortF2'), {
-      type: 'line',
-      data: {
-        labels: cohortData.map(r => D.monthLabels[r.month] || r.month),
-        datasets: [
-          { label: 'F2転換率(%)', data: cohortData.map(r => r.f2Rate), borderColor: '#e8710a', backgroundColor: 'rgba(232,113,10,0.1)', fill: true, tension: 0.3 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, ticks: { callback: v => v + '%' } } }
-      }
-    });
   }
 
   // Purchase count price table
