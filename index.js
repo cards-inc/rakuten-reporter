@@ -48,6 +48,17 @@ functions.http('fetchRppReport', async (req, res) => {
     }
   }
 
+  // 受注データ取得モード（RMS WEB API）
+  if (req.query.mode === 'fetch_orders') {
+    try {
+      const result = await fetchOrdersFromRmsApi(req.query);
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error('fetch_orders error:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   let browser;
   try {
     // months_back: 何ヶ月前まで遡るか（デフォルト0=当月のみ）
@@ -3301,6 +3312,284 @@ async function readFromBigQueryByTableName(dsProps, sheetName) {
 }
 
 // ============================
+// RMS WEB API 受注データ取得 → BigQuery投入
+// ============================
+async function fetchOrdersFromRmsApi(query) {
+  const serviceSecret = process.env.RMS_SERVICE_SECRET;
+  const licenseKey = process.env.RMS_LICENSE_KEY;
+  if (!serviceSecret || !licenseKey) throw new Error('RMS_SERVICE_SECRET / RMS_LICENSE_KEY not set');
+
+  const https = require('https');
+  const projectId = 'stellar-shape-491201-g8';
+  const datasetId = 'rakuten';
+  const tableId = 'orders';
+
+  // 期間パラメータ: from=YYYY-MM-DD, to=YYYY-MM-DD (デフォルト過去6ヶ月)
+  const now = new Date();
+  const defaultFrom = new Date(now);
+  defaultFrom.setMonth(defaultFrom.getMonth() - 6);
+  const fromDate = query.from || defaultFrom.toISOString().substring(0, 10);
+  const toDate = query.to || now.toISOString().substring(0, 10);
+
+  console.log(`fetchOrdersFromRmsApi: ${fromDate} 〜 ${toDate}`);
+
+  // RMS WEB API認証（ESA: Encoded ServiceSecret and LicenseKey Authorization）
+  const authStr = Buffer.from(`${serviceSecret}:${licenseKey}`).toString('base64');
+
+  // 受注検索API
+  async function searchOrders(startDate, endDate, page) {
+    const url = 'https://api.rms.rakuten.co.jp/es/2.0/order/searchOrder/';
+    const body = JSON.stringify({
+      dateType: 1, // 注文日
+      startDatetime: startDate + 'T00:00:00+0900',
+      endDatetime: endDate + 'T23:59:59+0900',
+      PaginationRequestModel: { requestRecordsAmount: 1000, requestPage: page, SortModelList: [{ sortColumn: 1, sortDirection: 1 }] }
+    });
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `ESA ${authStr}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(new Error(`JSON parse error: ${data.substring(0, 200)}`)); }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
+  // 受注詳細取得API
+  async function getOrderDetail(orderNumbers) {
+    const url = 'https://api.rms.rakuten.co.jp/es/2.0/order/getOrder/';
+    const body = JSON.stringify({ orderNumberList: orderNumbers, version: 7 });
+
+    return new Promise((resolve, reject) => {
+      const req = https.request(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `ESA ${authStr}`,
+          'Content-Type': 'application/json; charset=utf-8',
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(new Error(`JSON parse error: ${data.substring(0, 200)}`)); }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
+  // 全注文番号を取得
+  const allOrderNumbers = [];
+  let page = 1;
+  let totalPages = 1;
+
+  // 30日ごとに分割してリクエスト（API制限対応）
+  const fromDt = new Date(fromDate + 'T00:00:00+0900');
+  const toDt = new Date(toDate + 'T00:00:00+0900');
+  const chunks = [];
+  let chunkStart = new Date(fromDt);
+  while (chunkStart < toDt) {
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setDate(chunkEnd.getDate() + 29);
+    if (chunkEnd > toDt) chunkEnd.setTime(toDt.getTime());
+    chunks.push({
+      start: chunkStart.toISOString().substring(0, 10),
+      end: chunkEnd.toISOString().substring(0, 10),
+    });
+    chunkStart = new Date(chunkEnd);
+    chunkStart.setDate(chunkStart.getDate() + 1);
+  }
+
+  console.log(`fetchOrdersFromRmsApi: ${chunks.length} date chunks`);
+
+  for (const chunk of chunks) {
+    page = 1;
+    totalPages = 1;
+    while (page <= totalPages) {
+      console.log(`fetchOrdersFromRmsApi: searchOrder ${chunk.start}〜${chunk.end} page ${page}`);
+      const result = await searchOrders(chunk.start, chunk.end, page);
+      if (result.MessageModelList) {
+        const msg = result.MessageModelList.map(m => `${m.messageType}:${m.messageCode}:${m.message}`).join('; ');
+        console.log(`fetchOrdersFromRmsApi: API message: ${msg}`);
+        if (result.MessageModelList.some(m => m.messageType === 'ERROR')) {
+          throw new Error(`RMS API error: ${msg}`);
+        }
+      }
+      const orderNums = result.orderNumberList || [];
+      allOrderNumbers.push(...orderNums);
+      totalPages = result.PaginationResponseModel?.totalPages || 1;
+      console.log(`fetchOrdersFromRmsApi: page ${page}/${totalPages}, got ${orderNums.length} orders`);
+      page++;
+    }
+  }
+
+  console.log(`fetchOrdersFromRmsApi: total ${allOrderNumbers.length} order numbers`);
+  if (allOrderNumbers.length === 0) return { status: 'ok', orders: 0 };
+
+  // 注文詳細を100件ずつ取得（レート制限対応で間隔あけ）
+  const allOrders = [];
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (let i = 0; i < allOrderNumbers.length; i += 100) {
+    const batch = allOrderNumbers.slice(i, i + 100);
+    const batchNum = Math.floor(i / 100) + 1;
+    const totalBatches = Math.ceil(allOrderNumbers.length / 100);
+    console.log(`fetchOrdersFromRmsApi: getOrder batch ${batchNum}/${totalBatches} (${batch.length} orders)`);
+    try {
+      const detail = await getOrderDetail(batch);
+      if (detail.OrderModelList) {
+        allOrders.push(...detail.OrderModelList);
+      } else {
+        console.log(`fetchOrdersFromRmsApi: batch ${batchNum} no OrderModelList, keys=${Object.keys(detail).join(',')}`);
+        if (detail.MessageModelList) {
+          console.log(`fetchOrdersFromRmsApi: batch ${batchNum} msg=${detail.MessageModelList.map(m => m.messageType + ':' + m.message).join(';').substring(0, 200)}`);
+        }
+      }
+    } catch (e) {
+      console.log(`fetchOrdersFromRmsApi: batch ${batchNum} error: ${e.message?.substring(0, 100)}`);
+    }
+    // レート制限対応: 1秒待機
+    if (i + 100 < allOrderNumbers.length) await sleep(1000);
+  }
+
+  console.log(`fetchOrdersFromRmsApi: got ${allOrders.length} order details`);
+
+  // BigQueryに投入（既存データとマージ）
+  const bigquery = new BigQuery({ projectId });
+
+  // フラット化: 注文×商品行
+  const flatRows = [];
+  allOrders.forEach(order => {
+    const base = {
+      orderNumber: order.orderNumber || '',
+      orderDatetime: order.orderDatetime || '',
+      orderProgress: order.orderProgress || 0,
+      subStatusId: order.subStatusId || '',
+      subStatusName: order.subStatusName || '',
+      orderType: order.orderType || 0,
+      totalPrice: order.totalPrice || 0,
+      goodsPrice: order.goodsPrice || 0,
+      goodsTax: order.goodsTax || 0,
+      postagePrice: order.postagePrice || 0,
+      deliveryPrice: order.deliveryPrice || 0,
+      totalCouponDiscount: order.totalCouponDiscount || 0,
+      ordererEmailAddress: order.OrdererModel?.emailAddress || '',
+      ordererPrefecture: order.OrdererModel?.prefecture || '',
+      ordererSex: order.OrdererModel?.sex || '',
+    };
+    const items = order.PackageModelList?.flatMap(p => p.ItemModelList || []) || [];
+    if (items.length === 0) {
+      flatRows.push(base);
+    } else {
+      items.forEach(item => {
+        flatRows.push({
+          ...base,
+          itemName: item.itemName || '',
+          itemNumber: item.itemNumber || '',
+          manageNumber: item.manageNumber || '',
+          units: item.units || 1,
+          goodsPrice: item.price || base.goodsPrice,
+          itemId: item.itemId || '',
+        });
+      });
+    }
+  });
+
+  console.log(`fetchOrdersFromRmsApi: ${flatRows.length} flat rows to insert`);
+
+  // テーブル存在確認・作成
+  const dataset = bigquery.dataset(datasetId);
+  const table = dataset.table(tableId);
+  const [exists] = await table.exists();
+  if (!exists) {
+    console.log(`fetchOrdersFromRmsApi: creating table ${datasetId}.${tableId}`);
+    await dataset.createTable(tableId, { schema: { fields: Object.keys(flatRows[0]).map(k => ({ name: k, type: typeof flatRows[0][k] === 'number' ? 'FLOAT64' : 'STRING' })) } });
+  }
+
+  // 重複除去: 既存のorderNumberを取得して差分のみ挿入
+  let existingOrderNumbers = new Set();
+  try {
+    const [existingRows] = await bigquery.query({
+      query: `SELECT DISTINCT orderNumber FROM \`${projectId}.${datasetId}.${tableId}\``,
+    });
+    existingRows.forEach(r => existingOrderNumbers.add(r.orderNumber));
+    console.log(`fetchOrdersFromRmsApi: ${existingOrderNumbers.size} existing orders in BigQuery`);
+  } catch (e) {
+    console.log(`fetchOrdersFromRmsApi: could not read existing orders: ${e.message?.substring(0, 80)}`);
+  }
+
+  const newRows = flatRows.filter(r => !existingOrderNumbers.has(r.orderNumber));
+  console.log(`fetchOrdersFromRmsApi: ${newRows.length} new rows to insert`);
+
+  if (newRows.length > 0) {
+    // 500行ずつバッチ挿入
+    for (let i = 0; i < newRows.length; i += 500) {
+      const batch = newRows.slice(i, i + 500);
+      await table.insert(batch);
+      console.log(`fetchOrdersFromRmsApi: inserted batch ${Math.floor(i / 500) + 1} (${batch.length} rows)`);
+    }
+  }
+
+  return {
+    status: 'ok',
+    period: `${fromDate} 〜 ${toDate}`,
+    totalOrderNumbers: allOrderNumbers.length,
+    totalDetails: allOrders.length,
+    flatRows: flatRows.length,
+    newRows: newRows.length,
+    existingRows: existingOrderNumbers.size,
+  };
+}
+
+// ============================
+// 楽天イベントカレンダー取得
+// ============================
+async function fetchRakutenEvents() {
+  const https = require('https');
+
+  // calendar.rakuten.co.jp のイベント検索（お買物イベント ec=1600）
+  const url = 'https://calendar.rakuten.co.jp/search/evt?ec=1600';
+
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          // __NEXT_DATA__ JSONを抽出
+          const match = data.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+          if (!match) { resolve([]); return; }
+          const nextData = JSON.parse(match[1]);
+          const events = nextData?.props?.pageProps?.data?.eventSearchResponse?.data?.event_searches || [];
+          const parsed = events.map(e => ({
+            id: e.event_id,
+            title: e.cal_event?.event_title || '',
+            startDate: e.view_start_date || '',
+            endDate: e.view_end_date || '',
+            category: e.cal_event_category?.category_name || '',
+            url: e.cal_event?.reference_url || '',
+            interval: e.cal_event?.event_interval || 0,
+          }));
+          resolve(parsed);
+        } catch (e) { resolve([]); }
+      });
+    }).on('error', () => resolve([]));
+  });
+}
+
+// ============================
 // ダッシュボード HTML生成
 // ============================
 async function generateDashboardHtml() {
@@ -4258,7 +4547,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <nav class="tab-bar">
   <div class="tab-bar-inner">
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
-    <div class="main-tab" data-tab="tab-product">商品別実績</div>
+    <div class="main-tab" data-tab="tab-product">商品別分析</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
     <div class="main-tab" data-tab="tab-acq">CRM分析</div>
     <div class="main-tab" data-tab="tab-customer">顧客分析</div>
@@ -4309,9 +4598,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
 </div>
 
-<!-- Tab: 商品別実績 -->
+<!-- Tab: 商品別分析 -->
 <div class="tab-panel" id="tab-product">
-  <div class="panel-title">商品別実績</div>
+  <div class="panel-title">商品別分析</div>
   <div id="productTableWrap" style="overflow-x:auto"></div>
   <div class="section-box" style="margin-top:20px">
     <div class="section-title">月別推移</div>
@@ -5076,13 +5365,20 @@ function renderProductMonthlyTable() {
   const validMonths = D.months.filter(ym => ym >= '2025-10').slice().reverse(); // chronological
   if (validMonths.length === 0) { mWrap.innerHTML = '<div class="no-data">データなし</div>'; return; }
 
-  // 各月の全商品データ
+  // 各月 + 前月/前年同月のデータ
+  const allNeededMonths = new Set(validMonths);
+  validMonths.forEach(ym => {
+    const [y, m] = ym.split('-').map(Number);
+    const pm = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+    const py = (y - 1) + '-' + String(m).padStart(2, '0');
+    allNeededMonths.add(pm);
+    allNeededMonths.add(py);
+  });
   const monthAggs = {};
-  validMonths.forEach(ym => { monthAggs[ym] = aggregateProductMonth([ym]); });
+  [...allNeededMonths].forEach(ym => { if (D.months.includes(ym)) monthAggs[ym] = aggregateProductMonth([ym]); });
 
-  // 全商品管理番号を収集
   const allMn = new Set();
-  validMonths.forEach(ym => Object.keys(monthAggs[ym]).forEach(mn => allMn.add(mn)));
+  validMonths.forEach(ym => { if (monthAggs[ym]) Object.keys(monthAggs[ym]).forEach(mn => allMn.add(mn)); });
 
   const fmtMap = {
     sales: v => yen(v), orders: v => comma(v), access: v => comma(v),
@@ -5092,7 +5388,7 @@ function renderProductMonthlyTable() {
   const fmt = fmtMap[metric] || (v => String(v));
 
   const getVal = (agg, mn) => {
-    const p = agg[mn];
+    const p = agg?.[mn];
     if (!p) return 0;
     if (metric === 'cvr') return p.access > 0 ? (p.orders / p.access * 100) : 0;
     if (metric === 'unitPrice') return p.orders > 0 ? Math.round(p.sales / p.orders) : 0;
@@ -5100,29 +5396,61 @@ function renderProductMonthlyTable() {
     return p[metric] || 0;
   };
 
-  // 合計で降順ソート
+  function chgHtml(cur, prev) {
+    if (!prev || prev === 0) return '<span style="color:#999">-</span>';
+    const ch = ((cur - prev) / Math.abs(prev) * 100);
+    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+    return '<span style="font-size:10px;' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(0) + '%</span>';
+  }
+
+  // 前月/前年同月YM算出
+  function getPrevYm(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+  }
+  function getYoyYm(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return (y - 1) + '-' + String(m).padStart(2, '0');
+  }
+
   const mnList = [...allMn].map(mn => {
     const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
     return { mn, total };
   }).sort((a, b) => b.total - a.total).map(x => x.mn);
 
-  let html = '<table style="font-size:12px;width:100%"><thead><tr>';
-  html += '<th style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:1;cursor:pointer;white-space:nowrap" data-msort-key="mn">商品管理番号</th>';
+  // ヘッダー: 各月に値+前月比+前年同月比
+  let html = '<table style="font-size:12px;width:100%;border-collapse:collapse"><thead><tr>';
+  html += '<th rowspan="2" style="text-align:left;position:sticky;left:0;background:#f8f9fa;z-index:2;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="mn">商品管理番号</th>';
   validMonths.forEach(ym => {
-    html += '<th style="cursor:pointer;white-space:nowrap" data-msort-key="' + ym + '">' + (D.monthLabels[ym] || ym) + '</th>';
+    html += '<th colspan="3" style="text-align:center;border-bottom:1px solid #eee;white-space:nowrap">' + (D.monthLabels[ym] || ym) + '</th>';
   });
-  html += '<th style="cursor:pointer;white-space:nowrap" data-msort-key="total">合計</th>';
+  html += '<th rowspan="2" style="cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="total">合計</th>';
+  html += '</tr><tr>';
+  validMonths.forEach(ym => {
+    html += '<th style="cursor:pointer;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="' + ym + '">値</th>';
+    html += '<th style="font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前月比</th>';
+    html += '<th style="font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前年比</th>';
+  });
   html += '</tr></thead><tbody>';
 
-  mnList.forEach(mn => {
-    html += '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
+  function renderRow(mn) {
+    let tr = '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
     validMonths.forEach(ym => {
-      html += '<td style="text-align:right">' + fmt(getVal(monthAggs[ym], mn)) + '</td>';
+      const v = getVal(monthAggs[ym], mn);
+      const pm = getPrevYm(ym);
+      const py = getYoyYm(ym);
+      const pv = monthAggs[pm] ? getVal(monthAggs[pm], mn) : 0;
+      const yv = monthAggs[py] ? getVal(monthAggs[py], mn) : 0;
+      tr += '<td style="text-align:right">' + fmt(v) + '</td>';
+      tr += '<td style="text-align:right">' + chgHtml(v, pv) + '</td>';
+      tr += '<td style="text-align:right">' + chgHtml(v, yv) + '</td>';
     });
     const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
-    html += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td>';
-    html += '</tr>';
-  });
+    tr += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td></tr>';
+    return tr;
+  }
+
+  mnList.forEach(mn => { html += renderRow(mn); });
   html += '</tbody></table>';
   mWrap.innerHTML = html;
 
@@ -5144,15 +5472,7 @@ function renderProductMonthlyTable() {
       });
       const tbody = mWrap.querySelector('tbody');
       tbody.innerHTML = '';
-      sorted.forEach(mn => {
-        let tr = '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
-        validMonths.forEach(ym => {
-          tr += '<td style="text-align:right">' + fmt(getVal(monthAggs[ym], mn)) + '</td>';
-        });
-        const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
-        tr += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td></tr>';
-        tbody.innerHTML += tr;
-      });
+      sorted.forEach(mn => { tbody.innerHTML += renderRow(mn); });
     });
   });
 }
@@ -6321,7 +6641,7 @@ document.querySelectorAll('.main-tab').forEach(tab => {
     const target = document.getElementById(this.dataset.tab);
     if (target) target.classList.add('active');
     updateFilterUI(this.dataset.tab);
-    // 商品別実績タブはデフォルト当月
+    // 商品別分析タブはデフォルト当月
     if (this.dataset.tab === 'tab-product') {
       const mf = document.getElementById('monthFilter');
       const now = new Date();
