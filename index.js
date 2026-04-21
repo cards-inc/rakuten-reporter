@@ -4079,7 +4079,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <header class="app-header" onclick="location.reload()" style="cursor:pointer">
   <div class="header-inner">
     <div style="display:flex;align-items:center;gap:10px">
-      <img src="https://cards-inc.co.jp/wp-content/uploads/2024/06/cards-inc-logo.webp" alt="CARDS" style="height:32px;border-radius:4px" onerror="this.style.display='none'">
+      <img src="cards_logo.png" alt="CARDS" style="height:32px" onerror="this.style.display='none'">
       <div class="header-title">百福堂_楽天ストアアナリティクス</div>
     </div>
     <div class="header-meta">更新: ${safe(dateStr)}</div>
@@ -4123,15 +4123,9 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel active" id="tab-sales">
   <div class="panel-title">売上サマリ</div>
   <div id="salesCards" class="cards-grid"></div>
-  <div class="grid-2" style="grid-template-columns:2fr 1fr">
-    <div class="section-box">
-      <div class="section-title">日次推移</div>
-      <div class="chart-wrap chart-md"><canvas id="chartSalesDaily"></canvas></div>
-    </div>
-    <div class="section-box">
-      <div class="section-title">新規/リピート購入比率</div>
-      <div class="chart-wrap chart-md"><canvas id="chartNewRepeatPie"></canvas></div>
-    </div>
+  <div class="section-box" style="max-width:400px">
+    <div class="section-title">新規/リピート購入比率</div>
+    <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
   </div>
   <div class="section-box">
     <div class="section-title">売上KPIツリー</div>
@@ -4403,12 +4397,22 @@ function getMonthData(dataByMonth, ym, shiftedRange) {
   if (periodType === 'day' && (shiftedRange || (dayFrom && dayTo))) {
     const from = shiftedRange ? shiftedRange.from : dayFrom;
     const to = shiftedRange ? shiftedRange.to : dayTo;
+    const fromYm = from.substring(0, 7);
+    const toYm = to.substring(0, 7);
     const all = [];
-    Object.values(dataByMonth).forEach(arr => all.push(...arr));
-    return all.filter(r => {
-      const d = (r.date || '').replace(/\\//g, '-');
-      return d >= from && d <= to;
+    Object.entries(dataByMonth).forEach(([m, arr]) => {
+      arr.forEach(r => {
+        const d = (r.date || '').replace(/\\//g, '-');
+        if (d) {
+          // 日付がある場合は日付でフィルタ
+          if (d >= from && d <= to) all.push(r);
+        } else {
+          // 日付がない月次集計データは月キーで判定
+          if (m >= fromYm && m <= toYm) all.push(r);
+        }
+      });
     });
+    return all;
   }
   if (ym === 'all') {
     const all = [];
@@ -4531,30 +4535,6 @@ function renderSalesTab() {
   const salesArr = sorted.map(r => r.sales);
   const accessArr = sorted.map(r => r.access);
   const ordersArr = sorted.map(r => r.orders);
-
-  destroyChart('chartSalesDaily');
-  if (sorted.length > 0) {
-    chartInstances['chartSalesDaily'] = new Chart(document.getElementById('chartSalesDaily'), {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          { label: '売上金額', data: salesArr, borderColor: 'var(--c-primary)', backgroundColor: 'rgba(26,58,92,0.06)', fill: true, yAxisID: 'y', tension: 0.3, pointRadius: 2 },
-          { label: 'アクセス', data: accessArr, borderColor: '#1a73e8', borderDash: [5,3], yAxisID: 'y1', tension: 0.3, pointRadius: 1 },
-          { label: '件数', data: ordersArr, borderColor: '#0d904f', borderDash: [2,2], yAxisID: 'y1', tension: 0.3, pointRadius: 1 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { position: 'top', labels: { usePointStyle: true, padding: 16 } }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (ctx.datasetIndex === 0 ? yen(ctx.raw) : comma(ctx.raw)) } } },
-        scales: {
-          y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
-          y1: { position: 'right', grid: { drawOnChartArea: false } }
-        }
-      }
-    });
-  }
 
   // New/Repeat pie chart
   destroyChart('chartNewRepeatPie');
@@ -4691,37 +4671,38 @@ function renderSalesTab() {
     });
   }
 
-  // Product selector population - masterシートの商品名を使い、データがある商品のみ表示
+  try { initProductSelector(); } catch(e) { console.error('initProductSelector error:', e); }
+  renderProductMonthly();
+}
+
+function initProductSelector() {
   const pSel = document.getElementById('productItemSelect');
-  if (pSel.options.length <= 1) {
-    const productMap = {}; // manageNum -> name (データがある商品のみ)
-    // all_item_raw / rpp_item_rawからデータのある商品を収集
-    D.months.forEach(ym => {
-      (D.allItemByMonth[ym] || []).forEach(r => {
-        const key = r.manageNum || r.name;
-        if (key && !productMap[key]) productMap[key] = r.name || r.manageNum || key;
-        if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
-      });
-      (D.rppItemByMonth[ym] || []).forEach(r => {
-        const key = r.manageNum || r.name;
-        if (key && !productMap[key]) productMap[key] = r.name || key;
-        if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
-      });
+  if (!pSel || pSel.options.length > 1) return;
+  const productMap = {};
+  D.months.forEach(ym => {
+    (D.allItemByMonth[ym] || []).forEach(r => {
+      const key = r.manageNum || r.name;
+      if (key && !productMap[key]) productMap[key] = r.name || r.manageNum || key;
+      if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
     });
-    // masterシートの商品名で上書き（masterが正式名称）
-    if (D.masterProducts) {
-      Object.keys(productMap).forEach(key => {
-        if (D.masterProducts[key]) productMap[key] = D.masterProducts[key];
-      });
-    }
-    Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = name !== key ? name + ' (' + key + ')' : name;
-      pSel.appendChild(opt);
+    (D.rppItemByMonth[ym] || []).forEach(r => {
+      const key = r.manageNum || r.name;
+      if (key && !productMap[key]) productMap[key] = r.name || key;
+      if (r.manageNum && r.name && r.name !== '不明') productMap[r.manageNum] = r.name;
+    });
+  });
+  if (D.masterProducts) {
+    Object.keys(productMap).forEach(key => {
+      if (D.masterProducts[key]) productMap[key] = D.masterProducts[key];
     });
   }
-  renderProductMonthly();
+  Object.entries(productMap).sort((a, b) => a[1].localeCompare(b[1])).forEach(([key, name]) => {
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = name !== key ? name + ' (' + key + ')' : name;
+    pSel.appendChild(opt);
+  });
+  console.log('[initProductSelector] ' + pSel.options.length + ' products loaded');
 }
 
 function renderProductMonthly() {
