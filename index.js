@@ -5678,13 +5678,12 @@ function getAllMonthData(dataByMonth) {
 function renderAdsTab() {
   const adMonth = document.getElementById('monthFilter').value || 'all';
   const rppData = getMonthData(D.rppByMonth, adMonth);
-  // 月次集計シート: adMonthでフィルタ（'all'なら全期間）
-  const tdaData = D.tdaByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.tdaByMonth) : []);
-  const adData = D.adByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.adByMonth) : []);
-  const cpaData = (D.cpaByMonth || {})[adMonth] || (adMonth === 'all' ? getAllMonthData(D.cpaByMonth || {}) : []);
+  const tdaData = getMonthData(D.tdaByMonth, adMonth);
+  const adData = getMonthData(D.adByMonth, adMonth);
+  const cpaData = getMonthData(D.cpaByMonth || {}, adMonth);
   const rppItemData = getMonthData(D.rppItemByMonth, adMonth);
-  // rpp_kw_raw: 月フィルター
-  const rppKwData = D.rppKwByMonth[adMonth] || (adMonth === 'all' ? getAllMonthData(D.rppKwByMonth) : []);
+  // rpp_kw_raw: 月フィルター（getMonthData使用で日付範囲対応）
+  const rppKwData = getMonthData(D.rppKwByMonth, adMonth);
 
   const cmpYm = getCompareMonth(adMonth, compareMode);
 
@@ -6036,7 +6035,7 @@ function renderAcqTab() {
 
   // Mail KPIs + table - 月フィルター適用
   const allMailData = D.mailParsed || [];
-  const mailData = crmMonth === 'all' ? allMailData : allMailData.filter(r => r.date === crmMonth);
+  const mailData = allMailData.filter(r => r.date === crmMonth);
   const mailTotalSent = sumField(mailData, 'sent');
   const mailTotalOpened = sumField(mailData, 'opened');
   const mailTotalClicks = sumField(mailData, 'clicks');
