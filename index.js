@@ -4654,7 +4654,7 @@ body {
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
   background: #f8f9fa; color: var(--c-text-secondary); padding: 10px 12px;
-  text-align: right; white-space: nowrap; font-weight: 600; font-size: 11px;
+  text-align: center; white-space: nowrap; font-weight: 600; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.3px;
   border-bottom: 2px solid var(--c-border); position: sticky; top: 0; z-index: 2;
   cursor: pointer; user-select: none; transition: background 0.15s;
@@ -4663,7 +4663,7 @@ thead th:hover { background: #eef0f2; }
 thead th:first-child { text-align: left; }
 thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; display: inline; }
 tbody td {
-  padding: 9px 12px; text-align: right; border-bottom: 1px solid #f0f0f0;
+  padding: 9px 12px; text-align: center; border-bottom: 1px solid #f0f0f0;
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 tbody td:first-child {
@@ -5534,7 +5534,7 @@ function renderProductTab() {
   let html = '<table style="font-size:12px;width:100%"><thead><tr>';
   cols.forEach(c => {
     const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#f8f9fa;z-index:3;' : '';
-    html += '<th style="position:sticky;top:0;background:#f8f9fa;z-index:2;' + (c.sticky ? 'left:0;z-index:3;' : '') + 'text-align:' + (c.align || 'right') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '"><span>' + c.label + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
+    html += '<th style="position:sticky;top:0;background:#f8f9fa;z-index:2;' + (c.sticky ? 'left:0;z-index:3;' : '') + 'text-align:' + (c.align || 'center') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '"><span>' + c.label + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
   });
   html += '</tr></thead><tbody>';
 
@@ -5550,7 +5550,7 @@ function renderProductTab() {
         else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
         else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
         else val = c.fmt(r[c.key]);
-        html += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+        html += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'center') + '">' + val + '</td>';
       });
       html += '</tr>';
     });
@@ -5586,7 +5586,7 @@ function renderProductTab() {
           else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
           else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
           else val = c.fmt(r[c.key]);
-          tr += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+          tr += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'center') + '">' + val + '</td>';
         });
         tr += '</tr>';
         tbody.innerHTML += tr;
@@ -7026,9 +7026,11 @@ document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
 });
 
 // Period type toggle (月/日)
-// Default to latest month
+// Default to current month
 if (D.months.length > 0) {
-  currentMonth = D.months[D.months.length - 1];
+  const now = new Date();
+  const thisYm = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  currentMonth = D.months.includes(thisYm) ? thisYm : D.months[D.months.length - 1];
   monthSelect.value = currentMonth;
 }
 
