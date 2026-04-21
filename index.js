@@ -4026,6 +4026,7 @@ thead th {
 thead th:hover { background: #eef0f2; }
 thead th:first-child { text-align: left; }
 thead th { cursor: pointer; user-select: none; }
+thead th { cursor: pointer; user-select: none; }
 thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; }
 thead th.sorted .sort-icon { opacity: 1; color: var(--c-primary); }
 thead th.sorted-asc .sort-icon::after { content: '▲'; }
@@ -4209,7 +4210,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     </div>
     <div class="sub-panel" id="ad-cpa">
       <div id="cpaKpiRow" class="kpi-row"></div>
-      <div id="cpaTableWrap"></div>
     </div>
     <div class="sub-panel" id="ad-afi">
       <div id="afiKpiRow" class="kpi-row"></div>
@@ -5097,21 +5097,22 @@ function renderAdsTab() {
         cpc: kw.clicks > 0 ? Math.round(kw.spend / kw.clicks) : 0 });
     });
   });
-  // Custom table rendering for grouped KW display
-  const kwEl = document.getElementById('rppKwTableWrap');
-  if (rppKwRows.length === 0) { kwEl.innerHTML = '<div class="no-data">データなし</div>'; }
-  else {
-    let kwHtml = '<div class="table-wrap"><table><thead><tr><th style="text-align:left">商品 / キーワード</th><th>費用</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>';
-    rppKwRows.forEach(r => {
-      if (r.isHeader) {
-        kwHtml += '<tr style="background:#f0f4ff;font-weight:600"><td style="text-align:left">' + safe(String(r.name).substring(0, 45)) + '</td><td>' + yen(r.spend) + '</td><td>' + yen(r.sales) + '</td><td>' + comma(r.clicks) + '</td><td>' + comma(r.orders) + '</td><td>' + yen(r.cpc) + '</td><td>' + pct(r.cvr) + '</td><td>' + r.roas + '%</td></tr>';
-      } else {
-        kwHtml += '<tr><td style="text-align:left;padding-left:24px;color:#555">' + safe(r.kw) + '</td><td>' + yen(r.spend) + '</td><td>' + yen(r.sales) + '</td><td>' + comma(r.clicks) + '</td><td>' + comma(r.orders) + '</td><td>' + yen(r.cpc) + '</td><td>' + pct(r.cvr) + '</td><td>' + r.roas + '%</td></tr>';
-      }
-    });
-    kwHtml += '</tbody></table></div>';
-    kwEl.innerHTML = kwHtml;
-  }
+  // KW table with sortable columns
+  const kwFlatRows = rppKwRows.map(r => ({
+    label: r.isHeader ? r.name : '　' + r.kw,
+    spend: r.spend, sales: r.sales, clicks: r.clicks, orders: r.orders,
+    cpc: r.cpc, cvr: r.cvr, roas: r.roas, _isHeader: r.isHeader,
+  }));
+  buildTable('rppKwTableWrap', [
+    { key: 'label', label: '商品 / キーワード', fmt: (v, row) => row._isHeader ? '<b>' + safe(String(v).substring(0, 45)) + '</b>' : '<span style="padding-left:16px;color:#555">' + safe(v) + '</span>' },
+    { key: 'spend', label: '費用', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
+    { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+  ], kwFlatRows, { limit: 200 });
 
   // TDA
   const tdaTotalOrders = sumField(tdaData, 'orders');
@@ -5185,23 +5186,6 @@ function renderAdsTab() {
     { label: '経由売上', value: yen(cpaSales) },
     { label: 'ROAS', value: (cpaSpend > 0 ? (cpaSales/cpaSpend*100).toFixed(0) : 0) + '%' },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
-
-  const cpaRows = cpaData.map(r => ({
-    date: r.date,
-    spend: r.spend,
-    sales: r.sales,
-    rate: r.rate,
-    status: r.status,
-    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
-  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  buildTable('cpaTableWrap', [
-    { key: 'date', label: '月', fmt: v => safe(v) },
-    { key: 'spend', label: '請求額', fmt: v => yen(v) },
-    { key: 'sales', label: '経由売上', fmt: v => yen(v) },
-    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
-    { key: 'rate', label: '料率', fmt: v => safe(v) },
-    { key: 'status', label: 'ステータス', fmt: v => safe(v) },
-  ], cpaRows, { limit: 30 });
 
   // アフィリエイト
   const afiData = getMonthData(D.afiByMonth, adMonth);
