@@ -5278,7 +5278,7 @@ function renderSalesTab() {
     });
     const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
     const remainDays = sfMonth.length - actualDays;
-    cards.push({ label: '着地予測', value: yen(landingForecast), sub: actualDays + '日経過 / 残' + remainDays + '日' });
+    cards.push({ label: '着地予測', value: yen(landingForecast) });
   }
 
   document.getElementById('salesAndForecast').innerHTML = cards.map(c =>
