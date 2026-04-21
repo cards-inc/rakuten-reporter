@@ -4097,7 +4097,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <header class="app-header" onclick="location.reload()" style="cursor:pointer">
   <div class="header-inner">
     <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-      <img src="../cards_logo.png" alt="CARDS" style="height:28px" onerror="this.style.display='none'">
+      <img src="../cards_logo.png" alt="CARDS" style="height:28px;filter:brightness(0) invert(1)" onerror="this.style.display='none'">
       <div style="font-size:12px;color:#fff;letter-spacing:1px;font-weight:500">楽天市場アナリティクス</div>
     </div>
     <div class="header-meta">更新: ${safe(dateStr)}</div>
@@ -5232,8 +5232,8 @@ function renderAdsTab() {
 
   // Affiliate by rate with ratio
   const afiRateData = (D.afiByRateRows || []).slice();
-  const afiTotalSales = afiRateData.reduce((s, r) => s + (r.sales || 0), 0);
-  const afiRateWithRatio = afiRateData.map(r => ({ ...r, salesRatio: afiTotalSales > 0 ? (r.sales / afiTotalSales * 100) : 0 }));
+  const afiRateTotalSales = afiRateData.reduce((s, r) => s + (r.sales || 0), 0);
+  const afiRateWithRatio = afiRateData.map(r => ({ ...r, salesRatio: afiRateTotalSales > 0 ? (r.sales / afiRateTotalSales * 100) : 0 }));
   buildTable('afiByRateTableWrap', [
     { key: 'rate', label: '料率', fmt: v => safe(v) },
     { key: 'count', label: '件数', fmt: v => comma(v) },
