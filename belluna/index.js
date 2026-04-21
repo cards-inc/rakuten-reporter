@@ -4393,9 +4393,10 @@ async function generateDashboardHtml() {
     if (!ym) return;
     const device = (r[mailDeviceKey] || '').trim();
     const category = (r[mailCategoryKey] || '').trim();
-    // デバイス=全体のみ集計
+    // デバイス=全体 かつ メール種別=全体 のみ集計
     if (device !== '全体') return;
     const mailType = (r[mailTypeKey] || '').trim();
+    if (mailType !== '全体') return;
     if (!mailByYM[ym]) mailByYM[ym] = { sentCount: 0, sent: 0, opened: 0, clicks: 0, sales: 0, conversions: 0, types: [] };
     mailByYM[ym].sentCount += num(r[mailSentCountKey]);
     mailByYM[ym].sent += num(r[mailSentKey]);
