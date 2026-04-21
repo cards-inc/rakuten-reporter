@@ -3940,21 +3940,23 @@ async function generateDashboardHtml() {
       clicks: num(r[rppClicksKey]),
       orders: num(r[rppOrdersKey]),
     };
-    if (dateKey && rppDateSeen[dateKey] !== undefined) {
-      rppByMonth[ym][rppDateSeen[dateKey]] = row;
+    const dedupKey = ym + '|' + dateKey;
+    if (dateKey && rppDateSeen[dedupKey] !== undefined) {
+      rppByMonth[ym][rppDateSeen[dedupKey]] = row;
     } else {
-      rppDateSeen[dateKey] = rppByMonth[ym].length;
+      rppDateSeen[dedupKey] = rppByMonth[ym].length;
       rppByMonth[ym].push(row);
     }
   });
 
-  // RPP item data by month
+  // RPP item data by month (商品単位で重複排除、後の行を優先)
   const rppItemByMonth = {};
+  const rppItemSeen = {};
   rppItemRaw.data.forEach(r => {
     const ym = toYM(r['日付']);
     if (!ym) return;
     if (!rppItemByMonth[ym]) rppItemByMonth[ym] = [];
-    rppItemByMonth[ym].push({
+    const row = {
       date: toDateStr(r['日付']),
       manageNum: (r['商品管理番号'] || '').trim(),
       name: r['商品名'] || r['商品管理番号'] || '不明',
@@ -3962,16 +3964,24 @@ async function generateDashboardHtml() {
       sales: num(r[rppItemSalesKey]),
       clicks: num(r[rppItemClicksKey]),
       orders: num(r[rppItemOrdersKey]),
-    });
+    };
+    const dedupKey = ym + '|' + row.manageNum;
+    if (rppItemSeen[dedupKey] !== undefined) {
+      rppItemByMonth[ym][rppItemSeen[dedupKey]] = row;
+    } else {
+      rppItemSeen[dedupKey] = rppItemByMonth[ym].length;
+      rppItemByMonth[ym].push(row);
+    }
   });
 
-  // RPP kw data by month
+  // RPP kw data by month (商品+KW単位で重複排除、後の行を優先)
   const rppKwByMonth = {};
+  const rppKwSeen = {};
   rppKwRaw.data.forEach(r => {
     const ym = toYM(r['日付']);
     if (!ym) return;
     if (!rppKwByMonth[ym]) rppKwByMonth[ym] = [];
-    rppKwByMonth[ym].push({
+    const row = {
       date: toDateStr(r['日付']),
       kw: r['キーワード'] || '不明',
       name: r['商品名'] || r['商品管理番号'] || '',
@@ -3979,7 +3989,14 @@ async function generateDashboardHtml() {
       sales: num(r[rppKwSalesKey]),
       clicks: num(r[rppKwClicksKey]),
       orders: num(r[rppKwOrdersKey]),
-    });
+    };
+    const dedupKey = ym + '|' + (r['商品管理番号'] || '') + '|' + (r['キーワード'] || '');
+    if (rppKwSeen[dedupKey] !== undefined) {
+      rppKwByMonth[ym][rppKwSeen[dedupKey]] = row;
+    } else {
+      rppKwSeen[dedupKey] = rppKwByMonth[ym].length;
+      rppKwByMonth[ym].push(row);
+    }
   });
 
   // TDA data by month
@@ -6183,6 +6200,9 @@ function renderAcqTab() {
   const mailTotalSales = sumField(mailData, 'sales');
   const mailTotalOrders = sumField(mailData, 'orders');
   document.getElementById('mailKpiRow').innerHTML = [
+    { label: '配信数', value: comma(mailTotalSent) },
+    { label: '開封数', value: comma(mailTotalOpened) },
+    { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
     { label: 'クリック数', value: comma(mailTotalClicks) },
     { label: '転換数', value: comma(mailTotalOrders) },
     { label: '転換率', value: mailTotalSent > 0 ? (mailTotalOrders / mailTotalSent * 100).toFixed(2) + '%' : '-' },
@@ -6192,6 +6212,9 @@ function renderAcqTab() {
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('mailTableWrap', [
     { key: 'date', label: '年月', fmt: v => { const ym = String(v); return D.monthLabels[ym] || ym; } },
+    { key: 'sent', label: '配信数', fmt: v => comma(v) },
+    { key: 'opened', label: '開封数', fmt: v => comma(v) },
+    { key: 'openRate', label: '開封率', fmt: v => safe(v) },
     { key: 'clicks', label: 'クリック数', fmt: v => comma(v) },
     { key: 'orders', label: '転換数', fmt: v => comma(v) },
     { key: 'convRate', label: '転換率', fmt: v => safe(v) },
