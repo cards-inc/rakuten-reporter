@@ -4191,7 +4191,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       </div>
       <div class="sub-panel active" id="rpp-all">
         <div id="rppKpiRow" class="kpi-row"></div>
-        <div class="chart-wrap chart-sm"><canvas id="chartRppDaily"></canvas></div>
       </div>
       <div class="sub-panel" id="rpp-item">
         <div id="rppItemTableWrap"></div>
@@ -5015,37 +5014,6 @@ function renderAdsTab() {
     makeRow('KW入札', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
     '</tbody></table></div>';
 
-  // RPP daily chart - 商品入札/KW入札費用の積み上げ + 売上ライン
-  destroyChart('chartRppDaily');
-  // 日別で商品別費用を集計（rpp_item_raw）、KW別 = 全体 - 商品別
-  const itemSpendByDate = {};
-  rppItemData.forEach(r => { if (r.date) itemSpendByDate[r.date] = (itemSpendByDate[r.date] || 0) + (r.spend || 0); });
-  const rppSorted = [...rppData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  if (rppSorted.length > 0) {
-    const rLabels = rppSorted.map(r => { const p = r.date.split(/[\\/\\-]/); return p.length >= 3 ? p[1]+'/'+p[2] : r.date; });
-    const itemSpendArr = rppSorted.map(r => itemSpendByDate[r.date] || 0);
-    const kwSpendArr = rppSorted.map((r, i) => Math.max(0, (r.spend || 0) - itemSpendArr[i]));
-    chartInstances['chartRppDaily'] = new Chart(document.getElementById('chartRppDaily'), {
-      type: 'bar',
-      data: {
-        labels: rLabels,
-        datasets: [
-          { label: '商品入札費用', data: itemSpendArr, backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
-          { label: 'KW入札費用', data: kwSpendArr, backgroundColor: 'rgba(232,113,10,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
-          { label: '売上', data: rppSorted.map(r => r.sales), type: 'line', borderColor: '#0d904f', yAxisID: 'y', tension: 0.3, pointRadius: 1, order: 0 },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw) } } },
-        scales: {
-          x: { stacked: true },
-          y: { stacked: false, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } }
-        }
-      }
-    });
-  }
-
   // RPP Item table
   const rppItemAgg = {};
   rppItemData.forEach(r => {
@@ -5259,7 +5227,7 @@ function renderAcqTab() {
         labels: lineSorted.map(r => { const d = String(r.date).substring(0, 10); return d; }),
         datasets: [
           { label: '売上', data: lineSorted.map(r => r.sales), backgroundColor: 'rgba(26,58,92,0.6)', yAxisID: 'y', order: 1 },
-          { label: '��問者', data: lineSorted.map(r => r.visitors), type: 'line', borderColor: '#06b6d4', yAxisID: 'y1', tension: 0.3, pointRadius: 2, order: 0 },
+          { label: '訪問者', data: lineSorted.map(r => r.visitors), type: 'line', borderColor: '#06b6d4', yAxisID: 'y1', tension: 0.3, pointRadius: 2, order: 0 },
         ]
       },
       options: {
@@ -5337,7 +5305,6 @@ function renderAcqTab() {
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('mailTableWrap', [
     { key: 'date', label: '年月', fmt: v => { const ym = String(v); return D.monthLabels[ym] || ym; } },
-    { key: 'subject', label: 'メール種別', fmt: v => safe(String(v).substring(0, 40)) },
     { key: 'sent', label: '配信数', fmt: v => comma(v) },
     { key: 'opened', label: '開封数', fmt: v => comma(v) },
     { key: 'openRate', label: '開封率', fmt: v => safe(v) },
