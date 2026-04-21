@@ -6093,12 +6093,16 @@ function updateFilterUI(tabId) {
   const df = document.getElementById('dayFilterFrom');
   const dt = document.getElementById('dayFilterTo');
   const ds = document.getElementById('dayFilterSep');
-  if (monthTabs.includes(tabId)) {
-    mf.style.display = ''; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
-  } else if (noFilterTabs.includes(tabId)) {
-    mf.style.display = 'none'; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
+  const filterBar = document.querySelector('.filter-bar');
+  if (noFilterTabs.includes(tabId)) {
+    filterBar.style.display = 'none';
   } else {
-    mf.style.display = 'none'; df.style.display = ''; dt.style.display = ''; ds.style.display = '';
+    filterBar.style.display = '';
+    if (monthTabs.includes(tabId)) {
+      mf.style.display = ''; df.style.display = 'none'; dt.style.display = 'none'; ds.style.display = 'none';
+    } else {
+      mf.style.display = 'none'; df.style.display = ''; dt.style.display = ''; ds.style.display = '';
+    }
   }
 }
 document.querySelectorAll('.main-tab').forEach(tab => {
