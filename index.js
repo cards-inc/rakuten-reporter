@@ -4277,30 +4277,64 @@ async function generateDashboardHtml() {
   });
   const afiByRateRows = Object.values(afiByRate).sort((a, b) => b.sales - a.sales);
 
-  // ── 楽天イベントカレンダー取得 → シートに保存 ──
+  // ── 楽天イベントカレンダー取得 → シートに蓄積保存 ──
   let rakutenEvents = [];
   try {
-    rakutenEvents = await fetchRakutenEvents();
-    console.log(`Dashboard: ${rakutenEvents.length} Rakuten events fetched`);
-    // event_calendarシートに書き込み
-    if (rakutenEvents.length > 0) {
-      const evtHeaders = ['イベントID', 'イベント名', '開始日', '終了日'];
-      const evtRows = rakutenEvents.map(e => [
-        e.id || '', e.title || '', (e.startDate || '').substring(0, 10), (e.endDate || '').substring(0, 10)
-      ]);
-      const evtValues = [evtHeaders, ...evtRows];
-      try {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: SPREADSHEET_ID,
-          range: 'event_calendar!A1',
-          valueInputOption: 'RAW',
-          requestBody: { values: evtValues },
-        });
-        console.log(`Dashboard: event_calendar sheet updated with ${evtRows.length} events`);
-      } catch (e2) {
-        console.log(`Dashboard: event_calendar sheet write error: ${e2.message}`);
-      }
+    // 1. シートの既存データを読み込み
+    let existingEvents = [];
+    try {
+      const evtSheet = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'event_calendar!A2:D5000',
+      });
+      const evtRows = evtSheet.data.values || [];
+      existingEvents = evtRows.map(r => ({
+        id: r[0] || '', title: r[1] || '', startDate: r[2] || '', endDate: r[3] || ''
+      }));
+      console.log(`Dashboard: ${existingEvents.length} existing events in sheet`);
+    } catch (e2) {
+      console.log(`Dashboard: event sheet read: ${e2.message}`);
     }
+
+    // 2. 楽天カレンダーから新規取得
+    const freshEvents = await fetchRakutenEvents();
+    console.log(`Dashboard: ${freshEvents.length} Rakuten events fetched from web`);
+
+    // 3. マージ（既存 + 新規、ID or タイトル+日付で重複除外）
+    const seen = new Set();
+    const merged = [];
+    [...existingEvents, ...freshEvents].forEach(e => {
+      const key = e.id ? String(e.id) : (e.title + '|' + e.startDate);
+      if (seen.has(key)) return;
+      seen.add(key);
+      merged.push(e);
+    });
+    // 開始日でソート
+    merged.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+
+    // 4. シートに全データ書き込み（ヘッダー + マージ済みデータ）
+    const evtHeaders = ['イベントID', 'イベント名', '開始日', '終了日'];
+    const evtValues = [evtHeaders, ...merged.map(e => [
+      e.id || '', e.title || '', (e.startDate || '').substring(0, 10), (e.endDate || '').substring(0, 10)
+    ])];
+    try {
+      // 既存データをクリアしてから書き込み
+      await sheets.spreadsheets.values.clear({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'event_calendar!A:D',
+      });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'event_calendar!A1',
+        valueInputOption: 'RAW',
+        requestBody: { values: evtValues },
+      });
+      console.log(`Dashboard: event_calendar sheet updated with ${merged.length} events (${merged.length - existingEvents.length} new)`);
+    } catch (e2) {
+      console.log(`Dashboard: event_calendar sheet write error: ${e2.message}`);
+    }
+
+    rakutenEvents = merged;
   } catch (e) {
     console.log(`Dashboard: event fetch error: ${e.message}`);
   }
@@ -5226,20 +5260,28 @@ function renderSalesTab() {
     const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
     const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
 
-    // イベントアノテーション生成
+    // イベントアノテーション生成（主要イベントのみ: マラソン/スーパーSALE/ワンダフルデー）
     const eventAnnotations = {};
-    const evtColors = ['rgba(255,87,34,0.12)','rgba(76,175,80,0.12)','rgba(156,39,176,0.12)','rgba(3,169,244,0.12)','rgba(255,152,0,0.12)'];
-    (D.rakutenEvents || []).forEach((evt, ei) => {
+    const evtColorMap = { 'マラソン': 'rgba(255,87,34,0.13)', 'スーパーSALE': 'rgba(234,67,53,0.15)', 'ワンダフルデー': 'rgba(76,175,80,0.12)' };
+    const majorEvents = (D.rakutenEvents || []).filter(evt => {
+      const t = evt.title || '';
+      return t.includes('マラソン') || t.includes('スーパーSALE') || t.includes('ワンダフルデー');
+    });
+    let evtIdx = 0;
+    majorEvents.forEach(evt => {
       const eStart = evt.startDate ? evt.startDate.replace(/\\//g, '-').substring(0, 10) : '';
       const eEnd = evt.endDate ? evt.endDate.replace(/\\//g, '-').substring(0, 10) : '';
       if (!eStart) return;
       const si = dailyDates.findIndex(d => d >= eStart);
-      const eiIdx = eEnd ? dailyDates.findIndex(d => d > eEnd) : si + 1;
+      const eiEnd = eEnd ? dailyDates.findIndex(d => d > eEnd) : si + 1;
       if (si < 0) return;
-      eventAnnotations['evt' + ei] = {
-        type: 'box', xMin: si - 0.5, xMax: (eiIdx < 0 ? dailyDates.length : eiIdx) - 0.5,
-        backgroundColor: evtColors[ei % evtColors.length], borderWidth: 0,
-        label: { display: true, content: evt.title.substring(0, 15), position: 'start', font: { size: 9 }, color: '#666' }
+      const t = evt.title || '';
+      const color = t.includes('スーパーSALE') ? evtColorMap['スーパーSALE'] : t.includes('マラソン') ? evtColorMap['マラソン'] : evtColorMap['ワンダフルデー'];
+      const shortName = t.includes('スーパーSALE') ? 'SS' : t.includes('マラソン') ? 'マラソン' : 'WD';
+      eventAnnotations['evt' + evtIdx++] = {
+        type: 'box', xMin: si - 0.5, xMax: (eiEnd < 0 ? dailyDates.length : eiEnd) - 0.5,
+        backgroundColor: color, borderWidth: 0,
+        label: { display: true, content: shortName, position: 'start', font: { size: 9, weight: 'bold' }, color: '#c62828' }
       };
     });
 
