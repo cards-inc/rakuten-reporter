@@ -3238,7 +3238,13 @@ async function generateDashboardHtml() {
   };
   const toYM = (d) => {
     const dt = parseDate(d);
-    return dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : '';
+    if (dt) return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    // 「2026年3月」「2026-03」など日付なしの年月形式に対応
+    if (!d) return '';
+    const s = String(d).replace(/\//g, '-').replace(/年/g, '-').replace(/月/g, '').trim();
+    const m2 = s.match(/^(\d{4})-(\d{1,2})$/);
+    if (m2) return `${m2[1]}-${String(m2[2]).padStart(2, '0')}`;
+    return '';
   };
   const toDateStr = (d) => {
     const dt = parseDate(d);
@@ -4123,7 +4129,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     </div>
   </div>
   <div class="section-box">
-    <div class="section-title">売上分解ツリー</div>
+    <div class="section-title">売上KPIツリー</div>
     <div id="salesTreeWrap" style="overflow-x:auto"></div>
   </div>
   <div class="section-box">
@@ -4559,7 +4565,7 @@ function renderSalesTab() {
     });
   }
 
-  // ── 売上分解ツリー ──
+  // ── 売上KPIツリー ──
   const rppData = getMonthData(D.rppByMonth, currentMonth);
   const rppSales = sumField(rppData, 'sales');
   const rppClicks = sumField(rppData, 'clicks');
@@ -4652,42 +4658,6 @@ function renderSalesTab() {
     const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
     const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
 
-    // Rakuten event periods detection
-    function getRakutenEvents(dates) {
-      if (!dates.length) return [];
-      const events = [];
-      // Parse month from first date
-      const firstDate = dates[0];
-      const parts = firstDate.split(/[-\\/]/);
-      const year = parseInt(parts[0]);
-      const month = parseInt(parts[1]);
-      // Standard Rakuten events by month
-      // スーパーSALE: 3,6,9,12月の4-11日
-      // お買い物マラソン: 毎月（SALE月以外）
-      // ワンダフルデー: 毎月1日
-      // 5と0のつく日: 5,10,15,20,25,30日
-      const isSaleMonth = [3,6,9,12].includes(month);
-      if (isSaleMonth) {
-        events.push({ start: 4, end: 11, label: 'スーパーSALE' });
-      }
-      // お買い物マラソンは通常19-24日頃（月による）
-      if (!isSaleMonth) {
-        events.push({ start: 19, end: 24, label: 'お買い物マラソン' });
-      }
-      return events;
-    }
-    const evts = getRakutenEvents(dailyDates);
-
-    // Create background bands for events
-    const annotations = {};
-    evts.forEach((evt, i) => {
-      annotations['evt' + i] = {
-        type: 'box', xMin: evt.start - 1 - 0.5, xMax: evt.end - 1 + 0.5,
-        backgroundColor: 'rgba(200,200,200,0.15)', borderWidth: 0,
-        label: { display: true, content: evt.label, position: 'start', font: { size: 11, weight: 'bold' }, color: '#666', padding: 4 }
-      };
-    });
-
     chartInstances['chartDailyRppSplit'] = new Chart(document.getElementById('chartDailyRppSplit'), {
       type: 'bar',
       data: {
@@ -4702,7 +4672,6 @@ function renderSalesTab() {
         plugins: {
           legend: { position: 'bottom' },
           tooltip: { mode: 'index', callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw), footer: items => '合計: ' + yen(items.reduce((s, i) => s + i.raw, 0)) } },
-          annotation: { annotations }
         },
         scales: {
           x: { stacked: true },
