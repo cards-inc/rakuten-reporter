@@ -1,0 +1,2561 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>楽天市場アナリティクス</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<style>
+:root {
+  --c-primary: #1a3a5c;
+  --c-primary-light: #2d5f8a;
+  --c-primary-bg: rgba(26,58,92,0.06);
+  --c-bg: #f3f5f9;
+  --c-surface: #ffffff;
+  --c-border: #e8eaed;
+  --c-text: #1a1a2e;
+  --c-text-secondary: #5f6368;
+  --c-text-muted: #9aa0a6;
+  --c-success: #0d904f;
+  --c-danger: #d32f2f;
+  --c-blue: #1a73e8;
+  --c-orange: #e8710a;
+  --c-purple: #7b1fa2;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.1);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.12);
+  --radius: 10px;
+  --radius-sm: 6px;
+}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  background: var(--c-bg); color: var(--c-text); line-height: 1.5; font-size: 14px;
+}
+.app-header {
+  background: var(--c-primary); color: #fff; padding: 0 24px;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: var(--shadow-md);
+}
+.header-inner {
+  max-width: 1440px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 56px;
+}
+.header-title { font-size: 18px; font-weight: 700; letter-spacing: 1.5px; font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', sans-serif; text-transform: uppercase; }
+.header-meta { font-size: 12px; opacity: 0.85; }
+.tab-bar {
+  background: var(--c-surface); border-bottom: 1px solid var(--c-border);
+  position: sticky; top: 56px; z-index: 99;
+  overflow-x: auto; white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab-bar-inner {
+  max-width: 1440px; margin: 0 auto; padding: 0 16px;
+  display: flex; gap: 0;
+}
+.main-tab {
+  padding: 12px 20px; cursor: pointer; font-size: 13px; font-weight: 500;
+  color: var(--c-text-secondary); border-bottom: 3px solid transparent;
+  transition: all 0.2s; user-select: none; flex-shrink: 0;
+}
+.main-tab:hover { color: var(--c-primary); background: var(--c-primary-bg); }
+.main-tab.active { color: var(--c-primary); border-bottom-color: var(--c-primary); font-weight: 600; }
+.filter-bar {
+  background: var(--c-surface); border-bottom: 1px solid var(--c-border);
+  position: sticky; top: 97px; z-index: 98; padding: 10px 24px;
+}
+.filter-bar-inner {
+  max-width: 1440px; margin: 0 auto;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.filter-group { display: flex; align-items: center; gap: 8px; }
+.filter-label { font-size: 12px; color: var(--c-text-secondary); font-weight: 500; }
+.filter-select {
+  padding: 6px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--c-text); background: #fff; cursor: pointer;
+  outline: none; transition: border-color 0.2s;
+}
+.filter-select:focus { border-color: var(--c-primary); }
+.compare-toggle {
+  display: flex; border: 1px solid var(--c-border); border-radius: var(--radius-sm); overflow: hidden;
+}
+.compare-btn {
+  padding: 5px 14px; font-size: 12px; cursor: pointer; border: none;
+  background: #fff; color: var(--c-text-secondary); transition: all 0.2s;
+}
+.compare-btn.active { background: var(--c-primary); color: #fff; }
+.main-content { max-width: 1440px; margin: 0 auto; padding: 20px 24px; }
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes countUp { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; animation: fadeIn 0.3s ease-out; }
+.sub-panel { animation: fadeIn 0.25s ease-out; }
+.panel-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--c-text); }
+.cards-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px; margin-bottom: 20px;
+}
+.metric-card {
+  background: var(--c-surface); border-radius: var(--radius);
+  padding: 18px 20px; box-shadow: var(--shadow-sm);
+  border: 1px solid var(--c-border); transition: all 0.25s cubic-bezier(0.4,0,0.2,1); cursor: default;
+  animation: fadeInUp 0.4s ease-out backwards;
+}
+.metric-card:nth-child(1) { animation-delay: 0s; }
+.metric-card:nth-child(2) { animation-delay: 0.05s; }
+.metric-card:nth-child(3) { animation-delay: 0.1s; }
+.metric-card:nth-child(4) { animation-delay: 0.15s; }
+.metric-card:nth-child(5) { animation-delay: 0.2s; }
+.metric-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.metric-label { font-size: 11px; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.metric-value { font-size: 24px; font-weight: 700; color: var(--c-primary); line-height: 1.2; }
+.metric-sub { font-size: 11px; color: var(--c-text-secondary); margin-top: 4px; }
+.metric-change { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.metric-change.up { color: var(--c-success); }
+.metric-change.down { color: var(--c-danger); }
+.metric-change.flat { color: var(--c-text-muted); }
+.section-box {
+  background: var(--c-surface); border-radius: var(--radius);
+  padding: 20px 24px; margin-bottom: 20px;
+  box-shadow: var(--shadow-sm); border: 1px solid var(--c-border);
+  animation: fadeInUp 0.4s ease-out backwards;
+  transition: box-shadow 0.2s;
+}
+.section-box:hover { box-shadow: var(--shadow-md); }
+.section-title {
+  font-size: 15px; font-weight: 600; margin-bottom: 14px;
+  padding-bottom: 8px; border-bottom: 2px solid var(--c-primary);
+  display: inline-block;
+}
+.sub-title { font-size: 13px; font-weight: 600; color: var(--c-text-secondary); margin: 16px 0 10px; }
+.chart-wrap { position: relative; margin: 16px 0; }
+.chart-md { height: 320px; }
+.chart-sm { height: 260px; }
+.chart-xs { height: 200px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+.table-wrap { overflow-x: auto; overflow-y: auto; max-height: 480px; margin: 8px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  background: #f8f9fa; color: var(--c-text-secondary); padding: 10px 12px;
+  text-align: right; white-space: nowrap; font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.3px;
+  border-bottom: 2px solid var(--c-border); position: sticky; top: 0; z-index: 2;
+  cursor: pointer; user-select: none; transition: background 0.15s;
+}
+thead th:hover { background: #eef0f2; }
+thead th:first-child { text-align: left; }
+thead th .sort-icon { font-size: 10px; margin-left: 4px; opacity: 0.3; display: inline; }
+tbody td {
+  padding: 9px 12px; text-align: right; border-bottom: 1px solid #f0f0f0;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+tbody td:first-child {
+  text-align: left; font-weight: 500; max-width: 320px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+tbody tr:hover { background: #fafbfc; }
+tbody tr:nth-child(even) { background: #fcfcfd; }
+tbody tr:nth-child(even):hover { background: #f5f6f8; }
+.no-data {
+  text-align: center; padding: 40px 20px; color: var(--c-text-muted);
+  font-size: 14px; font-style: italic;
+}
+.sub-tabs { display: flex; gap: 0; margin-bottom: 14px; border-bottom: 1px solid var(--c-border); }
+.sub-tab {
+  padding: 8px 16px; cursor: pointer; font-size: 12px; font-weight: 500;
+  color: var(--c-text-muted); border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: all 0.2s;
+}
+.sub-tab:hover { color: var(--c-primary); }
+.sub-tab.active { color: var(--c-primary); border-bottom-color: var(--c-primary); }
+.sub-panel { display: none; }
+.sub-panel.active { display: block; }
+.search-box {
+  padding: 8px 12px; border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  font-size: 13px; width: 260px; outline: none; transition: border-color 0.2s;
+}
+.search-box:focus { border-color: var(--c-primary); }
+.kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 16px; }
+.kpi-item {
+  flex: 1; min-width: 130px; text-align: center; padding: 14px 12px;
+  background: #f8f9fa; border-radius: var(--radius-sm); border: 1px solid var(--c-border);
+}
+.kpi-label { font-size: 11px; color: var(--c-text-muted); margin-bottom: 4px; }
+.kpi-val { font-size: 20px; font-weight: 700; color: var(--c-primary); }
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+}
+.badge-success { background: #e8f5e9; color: var(--c-success); }
+.badge-danger { background: #ffebee; color: var(--c-danger); }
+.badge-neutral { background: #f5f5f5; color: var(--c-text-muted); }
+@media (max-width: 768px) {
+  .main-content { padding: 12px; }
+  .section-box { padding: 14px 16px; }
+  .cards-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .metric-value { font-size: 20px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .chart-md { height: 240px; }
+  .chart-sm { height: 200px; }
+  table { font-size: 11px; }
+  thead th, tbody td { padding: 6px 8px; }
+  .filter-bar-inner { gap: 8px; }
+  .search-box { width: 100%; }
+  .header-inner { padding: 0 12px; height: 48px; }
+  .tab-bar { top: 48px; }
+  .filter-bar { top: 89px; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-header" onclick="location.reload()" style="cursor:pointer">
+  <div class="header-inner">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+      <img src="../cards_logo.png" alt="CARDS" style="height:28px;filter:brightness(0) invert(1)" onerror="this.style.display='none'">
+      <div style="font-size:12px;color:#fff;letter-spacing:1px;font-weight:500">楽天市場アナリティクス</div>
+    </div>
+    <div class="header-meta">ベルーナ｜更新: 2026/4/21 11:17</div>
+  </div>
+</header>
+
+<nav class="tab-bar">
+  <div class="tab-bar-inner">
+    <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
+    <div class="main-tab" data-tab="tab-product">商品別分析</div>
+    <div class="main-tab" data-tab="tab-ads">広告分析</div>
+    <div class="main-tab" data-tab="tab-acq">CRM分析</div>
+    <div class="main-tab" data-tab="tab-customer">顧客分析</div>
+  </div>
+</nav>
+
+<div class="filter-bar">
+  <div class="filter-bar-inner">
+    <div class="filter-group">
+      <span class="filter-label">期間</span>
+      <select id="monthFilter" class="filter-select"></select>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">比較</span>
+      <div class="compare-toggle">
+        <button class="compare-btn active" data-compare="mom">前月比</button>
+        <button class="compare-btn" data-compare="yoy">前年同月比</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="main-content">
+
+<!-- Tab 1: 売上サマリ -->
+<div class="tab-panel active" id="tab-sales">
+  <div class="panel-title">売上サマリ</div>
+  <div id="salesAndForecast" class="cards-grid"></div>
+  <div class="grid-2" style="grid-template-columns:2fr 1fr">
+    <div class="section-box">
+      <div class="section-title">売上KPIツリー</div>
+      <div id="salesTreeWrap" style="overflow-x:auto"></div>
+    </div>
+    <div class="section-box">
+      <div class="section-title">新規/リピート購入比率</div>
+      <div class="chart-wrap chart-sm"><canvas id="chartNewRepeatPie"></canvas></div>
+    </div>
+  </div>
+  <div class="section-box">
+    <div class="section-title">日別売上（RPP経由 / 広告外）</div>
+    <div class="chart-wrap chart-md"><canvas id="chartDailyRppSplit"></canvas></div>
+  </div>
+</div>
+
+<!-- Tab: 商品別分析 -->
+<div class="tab-panel" id="tab-product">
+  <div class="panel-title">商品別分析</div>
+  <div id="productTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">月別推移</div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <span class="filter-label">指標</span>
+      <select id="productMetricSelect" class="filter-select" style="width:auto">
+        <option value="sales" selected>売上</option>
+        <option value="orders">件数</option>
+        <option value="access">アクセス</option>
+        <option value="cvr">転換率</option>
+        <option value="unitPrice">客単価</option>
+        <option value="rppSpend">RPP費用</option>
+        <option value="rppSales">RPP売上</option>
+        <option value="rppRoas">RPP ROAS</option>
+      </select>
+    </div>
+    <div id="productMonthlyTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
+  </div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">カテゴリ別実績</div>
+    <div id="categoryTableWrap"></div>
+  </div>
+  <div class="section-box" style="margin-top:20px">
+    <div class="section-title">カテゴリ別 売上推移</div>
+    <div class="chart-wrap chart-md"><canvas id="chartCategoryTrend"></canvas></div>
+  </div>
+</div>
+
+<!-- Tab 2: 広告分析 -->
+<div class="tab-panel" id="tab-ads">
+  <div class="panel-title">広告分析</div>
+  <div id="adCards" class="cards-grid"></div>
+  <div class="section-box">
+    <div class="sub-tabs" id="adSubTabs">
+      <div class="sub-tab active" data-subtab="ad-rpp">RPP広告</div>
+      <div class="sub-tab" data-subtab="ad-rakuten">楽天広告</div>
+      <div class="sub-tab" data-subtab="ad-tda">TDA広告</div>
+      <div class="sub-tab" data-subtab="ad-cpa">CPA広告</div>
+      <div class="sub-tab" data-subtab="ad-afi">アフィリエイト</div>
+    </div>
+    <div class="sub-panel active" id="ad-rpp">
+      <div class="sub-tabs" id="rppSubTabs" style="margin-bottom:12px;border-bottom:1px solid #e0e0e0">
+        <div class="sub-tab active" data-subtab="rpp-all">全体</div>
+        <div class="sub-tab" data-subtab="rpp-item">商品入札</div>
+        <div class="sub-tab" data-subtab="rpp-kw">KW入札</div>
+      </div>
+      <div class="sub-panel active" id="rpp-all">
+        <div id="rppKpiRow" class="kpi-row"></div>
+      </div>
+      <div class="sub-panel" id="rpp-item">
+        <div id="rppItemTableWrap"></div>
+      </div>
+      <div class="sub-panel" id="rpp-kw">
+        <div id="rppKwTableWrap"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="ad-rakuten">
+      <div id="adRakutenKpiRow" class="kpi-row"></div>
+      <div id="adRakutenTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="ad-tda">
+      <div id="tdaKpiRow" class="kpi-row"></div>
+      <div id="tdaTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="ad-cpa">
+      <div id="cpaKpiRow" class="kpi-row"></div>
+    </div>
+    <div class="sub-panel" id="ad-afi">
+      <div id="afiKpiRow" class="kpi-row"></div>
+      <div class="section-title" style="margin-bottom:8px">料率別集計</div>
+      <div class="grid-2">
+        <div id="afiByRateTableWrap"></div>
+        <div class="section-box"><div class="chart-wrap chart-sm"><canvas id="chartAfiRatePie"></canvas></div></div>
+      </div>
+      <div style="margin-top:16px"><div class="section-title">商品別集計</div></div>
+      <div id="afiByProductTableWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab 3: CRM分析 -->
+<div class="tab-panel" id="tab-acq">
+  <div class="panel-title">CRM分析</div>
+  <div class="section-box">
+    <div class="sub-tabs" id="acqSubTabs">
+      <div class="sub-tab active" data-subtab="acq-mail">メルマガ</div>
+      <div class="sub-tab" data-subtab="acq-line">LINE</div>
+    </div>
+    <div class="sub-panel active" id="acq-mail">
+      <div id="mailKpiRow" class="kpi-row"></div>
+      <div class="sub-title" style="margin-top:20px">配信分析</div>
+      <div id="mailTableWrap"></div>
+    </div>
+    <div class="sub-panel" id="acq-line">
+      <div class="sub-title">全体分析</div>
+      <div id="lineKpiRow" class="kpi-row"></div>
+      <div class="grid-2">
+        <div class="chart-wrap chart-sm"><canvas id="chartLineTrend"></canvas></div>
+        <div class="chart-wrap chart-sm"><canvas id="chartLinePerf"></canvas></div>
+      </div>
+      <div class="sub-title" style="margin-top:20px">メッセージ別分析</div>
+      <div id="lineTableWrap"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab 4: 顧客分析 -->
+<div class="tab-panel" id="tab-customer">
+  <div class="panel-title">顧客分析</div>
+  <div class="section-box">
+    <div class="sub-tabs">
+      <div class="sub-tab active" data-subtab="cust-repeat">リピート</div>
+      <div class="sub-tab" data-subtab="cust-basket">バスケット</div>
+      <div class="sub-tab" data-subtab="cust-ltv">LTV</div>
+      <div class="sub-tab" data-subtab="cust-rfm">RFM</div>
+      <div class="sub-tab" data-subtab="cust-entrance">エントランス</div>
+      <div class="sub-tab" data-subtab="cust-timing">タイミング</div>
+    </div>
+    <div class="sub-panel active" id="cust-repeat">
+      <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+        <span class="filter-label">商品フィルタ</span>
+        <select id="repeatProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+          <option value="">全商品</option>
+        </select>
+      </div>
+      <div id="repeatCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">月別 新規/リピート客数・比率</div>
+        <div class="chart-wrap" style="height:320px"><canvas id="chartMonthlyNR"></canvas></div>
+        <div id="monthlyNRTable" style="margin-top:12px"></div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">購入回数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartPurchaseDist"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">月別リピート率推移</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartRepeatRateTrend"></canvas></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">リピート購入商品ランキング<span style="font-size:11px;font-weight:400;color:#888;margin-left:8px">（累計）</span></div>
+          <div id="repeatItemTableWrap"></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">入口商品別 F2転換率<span style="font-size:11px;font-weight:400;color:#888;margin-left:8px">（累計）</span></div>
+          <div id="entryItemF2TableWrap"></div>
+        </div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-basket">
+      <div id="basketCards" class="cards-grid"></div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">購入点数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartUnitsDist"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">同時購入パターン TOP10</div>
+          <div id="basketPairsTable"></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">商品別 同時購入分析</div>
+        <div style="margin-bottom:14px">
+          <select id="basketProductSelect" class="filter-select" style="width:auto;min-width:300px;max-width:100%">
+            <option value="">商品を選択してください</option>
+          </select>
+        </div>
+        <div id="coProductTableWrap"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-ltv">
+      <div style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
+        <span class="filter-label">商品フィルタ</span>
+        <select id="ltvProductFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+          <option value="">全商品</option>
+        </select>
+      </div>
+      <div class="section-box">
+        <div class="section-title">初回購入商品別 LTV・F2転換</div>
+        <div id="ltvFirstItemTable"></div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">購入回数別 累計金額</div>
+        <div id="ltvCountPriceTable"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-rfm">
+      <div id="rfmCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">RFMセグメント分布</div>
+        <div class="grid-2">
+          <div id="rfmSegmentTable"></div>
+          <div class="chart-wrap" style="height:300px"><canvas id="chartRfmHeatmap"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">セグメント別 購入商品比率</div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
+          <span class="filter-label">セグメント</span>
+          <select id="rfmSegmentFilter" class="filter-select" style="width:auto;min-width:200px">
+            <option value="">全セグメント</option>
+          </select>
+        </div>
+        <div class="grid-2">
+          <div id="rfmProductTable"></div>
+          <div class="chart-wrap" style="height:300px"><canvas id="chartSegmentProduct"></canvas></div>
+        </div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-entrance">
+      <div id="entranceCards" class="cards-grid"></div>
+      <div class="section-box">
+        <div class="section-title">入口商品別 F2転換・LTV</div>
+        <div id="entranceItemTable"></div>
+      </div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">入口商品別 F2転換率</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartEntranceF2"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">入口商品別 平均LTV</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartEntranceLTV"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">2回目購入商品（入口商品別）</div>
+        <div style="margin-bottom:10px;display:flex;gap:10px;align-items:center">
+          <span class="filter-label">入口商品</span>
+          <select id="entranceItemFilter" class="filter-select" style="width:auto;min-width:200px;max-width:400px">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <div id="entrance2ndTable"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="cust-timing">
+      <div id="timingCards" class="cards-grid"></div>
+      <div class="grid-2">
+        <div class="section-box">
+          <div class="section-title">初回→2回目購入 経過日数分布</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartF2Days"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">曜日別 注文数</div>
+          <div class="chart-wrap chart-sm"><canvas id="chartDayOfWeek"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box">
+        <div class="section-title">月別 注文数推移</div>
+        <div class="chart-wrap" style="height:280px"><canvas id="chartMonthlyOrders"></canvas></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<script>
+// ── Data ──
+const D = {"updatedAt":"2026/4/21 11:17","months":[],"monthLabels":{},"allByMonth":{},"rppByMonth":{},"rppItemByMonth":{},"rppKwByMonth":{},"tdaByMonth":{},"adByMonth":{},"cpaByMonth":{},"lineByMonth":{},"afiByMonth":{},"mailData":[],"allItemByMonth":{},"masterProducts":{},"hasOrders":false,"orderItems":[],"repeatAnalysis":{"totalCustomers":0,"firstTimers":0,"repeaters":0,"f2Rate":0,"purchaseDistRows":[],"monthlyNR":[],"repeatItemRows":[],"entryItemF2Rows":[]},"basketAnalysis":{"totalOrders":0,"avgUnitsPerOrder":0,"avgOrderPrice":0,"crossSellRate":0,"topPairs":[],"unitsDistRows":[],"coProductData":{},"basketProducts":[]},"ltvAnalysis":{"purchaseCountPrice":[],"firstItemLTV":[]},"mailParsed":[],"afiByRateRows":[],"rakutenEvents":[{"id":587725,"title":"買い物マラソン","startDate":"2026-04-24","endDate":"2026-04-27"},{"id":585084,"title":"0と5のつく日ポイント4倍！","startDate":"2026-04-25","endDate":"2026-04-25"},{"id":585329,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-04-25","endDate":"2026-04-25"},{"id":585085,"title":"0と5のつく日ポイント4倍！","startDate":"2026-04-30","endDate":"2026-04-30"},{"id":585330,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-04-30","endDate":"2026-04-30"},{"id":584940,"title":"【1日はワンダフルデー】エントリーでポイント3倍！リピート2倍上限！1000ポイント","startDate":"2026-05-01","endDate":"2026-05-01"},{"id":544071,"title":"【毎月1日】ワンダフルデー【事前エントリー必須】","startDate":"2026-05-01","endDate":"2026-05-01"},{"id":585080,"title":"0と5のつく日ポイント4倍！","startDate":"2026-05-05","endDate":"2026-05-05"},{"id":585325,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-05-05","endDate":"2026-05-05"},{"id":585081,"title":"0と5のつく日ポイント4倍！","startDate":"2026-05-10","endDate":"2026-05-10"},{"id":585326,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-05-10","endDate":"2026-05-10"},{"id":585082,"title":"0と5のつく日ポイント4倍！","startDate":"2026-05-15","endDate":"2026-05-15"},{"id":585327,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-05-15","endDate":"2026-05-15"},{"id":585086,"title":"【18日】楽天ご愛顧感謝デーいちばの日！ダイヤモンド会員4倍！プラチナ3倍！ゴールド2倍！上限1000ポイント","startDate":"2026-05-18","endDate":"2026-05-18"},{"id":585131,"title":"【18日とお買い物マラソン】どっちがお得？ダイヤモンド・プラチナ・ゴールド会員で徹底比較","startDate":"2026-05-18","endDate":"2026-05-18"},{"id":544072,"title":"【毎月18日】いちばの日【事前エントリー必須】","startDate":"2026-05-18","endDate":"2026-05-18"},{"id":585083,"title":"0と5のつく日ポイント4倍！","startDate":"2026-05-20","endDate":"2026-05-20"},{"id":585328,"title":"楽天0と5のつく日！楽天カードで4倍！上限1,000ポイント","startDate":"2026-05-20","endDate":"2026-05-20"}],"shareForecast":[]};
+
+// ── Utility ──
+const yen = v => '\u00a5' + Number(v||0).toLocaleString();
+const pct = v => Number(v||0).toFixed(2) + '%';
+const pct1 = v => Number(v||0).toFixed(1) + '%';
+const comma = v => Number(v||0).toLocaleString();
+const safe = s => {
+  const d = document.createElement('div');
+  d.textContent = String(s||'');
+  return d.innerHTML;
+};
+
+// ── State ──
+let currentMonth = 'all';
+let compareMode = 'mom'; // mom, yoy
+const chartInstances = {};
+
+function destroyChart(id) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+}
+
+// ── Month filter population ──
+const monthSelect = document.getElementById('monthFilter');
+D.months.forEach(ym => {
+  const opt = document.createElement('option');
+  opt.value = ym; opt.textContent = D.monthLabels[ym] || ym;
+  monthSelect.appendChild(opt);
+});
+// Default to latest month
+if (D.months.length > 0) monthSelect.value = D.months[D.months.length - 1];
+
+// ── Compare month calculation ──
+function getCompareMonth(ym, mode) {
+  if (!ym || ym === 'all') return null;
+  const [y, m] = ym.split('-').map(Number);
+  if (mode === 'mom') {
+    const pm = m === 1 ? 12 : m - 1;
+    const py = m === 1 ? y - 1 : y;
+    return py + '-' + String(pm).padStart(2, '0');
+  }
+  if (mode === 'yoy') {
+    return (y - 1) + '-' + String(m).padStart(2, '0');
+  }
+  return null;
+}
+
+function calcChange(current, previous) {
+  if (!previous || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+function changeHtml(changeVal) {
+  if (changeVal === null || changeVal === undefined) return '';
+  const cls = changeVal > 0.5 ? 'up' : changeVal < -0.5 ? 'down' : 'flat';
+  const sign = changeVal > 0 ? '+' : '';
+  return '<div class="metric-change ' + cls + '">' + sign + changeVal.toFixed(1) + '%</div>';
+}
+
+// ── Data getters ──
+function getMonthData(dataByMonth, ym) {
+  if (ym === 'all') {
+    const all = [];
+    Object.values(dataByMonth).forEach(arr => all.push(...arr));
+    return all;
+  }
+  return dataByMonth[ym] || [];
+}
+
+function sumField(arr, field) {
+  return arr.reduce((s, r) => s + (Number(r[field]) || 0), 0);
+}
+
+function avgField(arr, field) {
+  const vals = arr.filter(r => Number(r[field]) > 0);
+  return vals.length ? vals.reduce((s, r) => s + Number(r[field]), 0) / vals.length : 0;
+}
+
+// ── Table builder ──
+function buildTable(containerId, columns, rows, opts = {}) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<div class="no-data">データなし</div>';
+    return;
+  }
+  const limit = opts.limit || 100;
+
+  function renderBody(data) {
+    let h = '';
+    data.slice(0, limit).forEach(row => {
+      h += '<tr>';
+      columns.forEach(c => {
+        const v = row[c.key];
+        h += '<td>' + (c.fmt ? c.fmt(v, row) : safe(v)) + '</td>';
+      });
+      h += '</tr>';
+    });
+    return h;
+  }
+
+  let html = '<div class="table-wrap"><table><thead><tr>';
+  columns.forEach((c, ci) => {
+    html += '<th data-col="' + ci + '" data-key="' + (c.key||'') + '" style="cursor:pointer;user-select:none"><span>' + safe(c.label) + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
+  });
+  html += '</tr></thead><tbody>' + renderBody(rows) + '</tbody></table></div>';
+  el.innerHTML = html;
+
+  // Sortable headers
+  let currentRows = [...rows];
+  el.querySelectorAll('thead th').forEach(th => {
+    th.addEventListener('click', function() {
+      const key = this.dataset.key;
+      const col = columns.find(c => c.key === key);
+      if (!col) return;
+      const wasAsc = this.dataset.sortDir === 'asc';
+      const newDir = wasAsc ? 'desc' : 'asc';
+      // Reset all headers
+      el.querySelectorAll('thead th').forEach(t => {
+        t.dataset.sortDir = '';
+        const si = t.querySelector('.sort-icon');
+        if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; si.style.color = ''; }
+      });
+      // Set current header
+      this.dataset.sortDir = newDir;
+      const si = this.querySelector('.sort-icon');
+      if (si) { si.textContent = newDir === 'asc' ? '▲' : '▼'; si.style.opacity = '1'; si.style.color = '#1a73e8'; }
+      // Sort
+      currentRows = [...rows].sort((a, b) => {
+        let va = a[key], vb = b[key];
+        if (typeof va === 'number' && typeof vb === 'number') return newDir === 'asc' ? va - vb : vb - va;
+        const na = Number(va), nb = Number(vb);
+        if (!isNaN(na) && !isNaN(nb)) return newDir === 'asc' ? na - nb : nb - na;
+        return newDir === 'asc' ? String(a[key]||'').localeCompare(String(b[key]||'')) : String(b[key]||'').localeCompare(String(a[key]||''));
+      });
+      el.querySelector('tbody').innerHTML = renderBody(currentRows);
+    });
+  });
+}
+
+// ── Render functions ──
+
+function renderSalesTab() {
+  const data = getMonthData(D.allByMonth, currentMonth);
+  const cmpYm = getCompareMonth(currentMonth, compareMode);
+  const cmpData = cmpYm ? getMonthData(D.allByMonth, cmpYm) : [];
+
+  const totalSales = sumField(data, 'sales');
+  const totalOrders = sumField(data, 'orders');
+  const totalAccess = sumField(data, 'access');
+  const avgCvr = totalAccess > 0 ? (totalOrders / totalAccess * 100) : 0;
+  const avgPrice = totalOrders > 0 ? totalSales / totalOrders : 0;
+  const totalNew = sumField(data, 'newBuyers');
+  const totalRepeat = sumField(data, 'repeatBuyers');
+
+  const cTotalSales = cmpData.length ? sumField(cmpData, 'sales') : null;
+  const cTotalOrders = cmpData.length ? sumField(cmpData, 'orders') : null;
+  const cTotalAccess = cmpData.length ? sumField(cmpData, 'access') : null;
+  const cAvgCvr = cmpData.length && sumField(cmpData, 'access') > 0 ? (sumField(cmpData, 'orders') / sumField(cmpData, 'access') * 100) : null;
+  const cAvgPrice = cmpData.length && sumField(cmpData, 'orders') > 0 ? sumField(cmpData, 'sales') / sumField(cmpData, 'orders') : null;
+
+  const cards = [
+    { label: '売上', value: yen(totalSales), change: calcChange(totalSales, cTotalSales) },
+    { label: '売上件数', value: comma(totalOrders), change: calcChange(totalOrders, cTotalOrders) },
+    { label: 'アクセス人数', value: comma(totalAccess), change: calcChange(totalAccess, cTotalAccess) },
+    { label: '転換率', value: pct(avgCvr), change: cAvgCvr !== null ? calcChange(avgCvr, cAvgCvr) : null },
+    { label: '客単価', value: yen(Math.round(avgPrice)), change: calcChange(avgPrice, cAvgPrice) },
+  ];
+  // ── 着地予測（マーケ予測ベース） ──
+  const shareForecasts = D.shareForecast || [];
+  const ymParts = currentMonth.split('-');
+  const sfYm = ymParts[0] + '-' + ymParts[1].padStart(2, '0');
+  const sfMonth = shareForecasts.filter(sf => sf.date.substring(0, 7) === sfYm);
+  if (sfMonth.length > 0 && data.length > 0) {
+    const dailySalesMap = {};
+    data.forEach(r => { const d = String(r.date).split('/').join('-'); dailySalesMap[d] = r.sales || 0; });
+    const totalShare = sfMonth.reduce((s, r) => s + r.share, 0);
+    let actualShareSum = 0, actualSalesSum = 0, actualDays = 0;
+    const today = new Date().toISOString().substring(0, 10);
+    sfMonth.forEach(sf => {
+      const actual = dailySalesMap[sf.date] !== undefined ? dailySalesMap[sf.date] : null;
+      if (sf.date <= today && actual !== null) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
+    });
+    const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
+    const remainDays = sfMonth.length - actualDays;
+    cards.unshift({ label: '着地予測', value: yen(landingForecast) });
+  }
+
+  document.getElementById('salesAndForecast').innerHTML = cards.map(c =>
+    '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' +
+    (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') +
+    (c.sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + c.sub + '</div>' : '') +
+    '</div>'
+  ).join('');
+
+  // Daily chart
+  const sorted = [...data].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const labels = sorted.map(r => {
+    const d = r.date.replace(/\//g, '-').replace(/-/g, '/');
+    const parts = d.split('/');
+    return parts.length >= 3 ? parts[1] + '/' + parts[2] : r.date;
+  });
+  const salesArr = sorted.map(r => r.sales);
+  const accessArr = sorted.map(r => r.access);
+  const ordersArr = sorted.map(r => r.orders);
+
+  // New/Repeat pie chart
+  destroyChart('chartNewRepeatPie');
+  if (totalNew > 0 || totalRepeat > 0) {
+    chartInstances['chartNewRepeatPie'] = new Chart(document.getElementById('chartNewRepeatPie'), {
+      type: 'doughnut',
+      data: {
+        labels: ['新規購入者', 'リピート購入者'],
+        datasets: [{ data: [totalNew, totalRepeat], backgroundColor: ['#1a3a5c', '#e8710a'] }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: { callbacks: { label: ctx => ctx.label + ': ' + comma(ctx.raw) + '人 (' + (totalNew + totalRepeat > 0 ? (ctx.raw / (totalNew + totalRepeat) * 100).toFixed(1) : 0) + '%)' } }
+        }
+      }
+    });
+  }
+
+  // ── 売上KPIツリー ──
+  const rppData = getMonthData(D.rppByMonth, currentMonth);
+  const rppSales = sumField(rppData, 'sales');
+  const rppClicks = sumField(rppData, 'clicks');
+  const rppOrders = sumField(rppData, 'orders');
+  const nonRppSales = totalSales - rppSales;
+  const nonRppAccess = totalAccess - rppClicks;
+  const nonRppOrders = totalOrders - rppOrders;
+  const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
+  const rppUnitPrice = rppOrders > 0 ? Math.round(rppSales / rppOrders) : 0;
+  const nonRppCvr = nonRppAccess > 0 ? (nonRppOrders / nonRppAccess * 100) : 0;
+  const nonRppUnitPrice = nonRppOrders > 0 ? Math.round(nonRppSales / nonRppOrders) : 0;
+
+  // 前月・前年比
+  const prevMonthYm = getCompareMonth(currentMonth, 'mom');
+  const prevYearYm = getCompareMonth(currentMonth, 'yoy');
+  function getTreeCompare(ym) {
+    if (!ym) return null;
+    const d = getMonthData(D.allByMonth, ym);
+    const r = getMonthData(D.rppByMonth, ym);
+    const s = sumField(d, 'sales'), o = sumField(d, 'orders'), a = sumField(d, 'access');
+    const rs = sumField(r, 'sales'), rc = sumField(r, 'clicks'), ro = sumField(r, 'orders');
+    return {
+      sales: s, rppSales: rs, nonRppSales: s - rs,
+      rppClicks: rc, rppOrders: ro, rppCvr: rc > 0 ? (ro/rc*100) : 0, rppUnitPrice: ro > 0 ? Math.round(rs/ro) : 0,
+      nonRppAccess: a - rc, nonRppOrders: o - ro, nonRppCvr: (a-rc) > 0 ? ((o-ro)/(a-rc)*100) : 0, nonRppUnitPrice: (o-ro) > 0 ? Math.round((s-rs)/(o-ro)) : 0,
+      access: a, cvr: a > 0 ? (o/a*100) : 0, unitPrice: o > 0 ? Math.round(s/o) : 0,
+    };
+  }
+  const prevM = getTreeCompare(prevMonthYm);
+  const prevY = getTreeCompare(prevYearYm);
+
+  function treeRatio(cur, prev) {
+    if (!prev || prev === 0) return '-';
+    return (cur / prev * 100).toFixed(1) + '%';
+  }
+  function treeBox(title, value, prevMVal, prevYVal, color) {
+    const bg = color || 'var(--c-primary)';
+    return '<div style="background:' + bg + ';color:#fff;border-radius:8px;padding:10px 16px;text-align:center;min-width:130px">' +
+      '<div style="font-size:11px;opacity:0.85">' + title + '</div>' +
+      '<div style="font-size:18px;font-weight:700;margin:4px 0">' + value + '</div>' +
+      '<div style="font-size:10px;opacity:0.8">前月比 ' + (prevMVal || '-') + '</div>' +
+      '<div style="font-size:10px;opacity:0.8">前年比 ' + (prevYVal || '-') + '</div>' +
+    '</div>';
+  }
+
+  const monthLabel = D.monthLabels[currentMonth] || currentMonth;
+  const treeHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:4px">' +
+    // Level 1: 月売上
+    '<div style="display:flex;justify-content:center">' +
+    treeBox(monthLabel + '売上', yen(totalSales), treeRatio(totalSales, prevM?.sales), treeRatio(totalSales, prevY?.sales)) +
+    '</div>' +
+    '<div style="width:2px;height:16px;background:#1a3a5c;margin:0 auto"></div>' +
+    // Level 2: RPP / 非RPP
+    '<div style="display:flex;justify-content:center;gap:40px;position:relative">' +
+    '<div style="position:absolute;top:0;left:25%;right:25%;height:1px;background:#1a3a5c"></div>' +
+    treeBox('RPP広告売上', yen(rppSales), treeRatio(rppSales, prevM?.rppSales), treeRatio(rppSales, prevY?.rppSales)) +
+    treeBox('非RPP広告売上', yen(nonRppSales), treeRatio(nonRppSales, prevM?.nonRppSales), treeRatio(nonRppSales, prevY?.nonRppSales)) +
+    '</div>' +
+    '<div style="display:flex;justify-content:center;gap:8px;position:relative">' +
+    // Level 3 left: RPP breakdown
+    treeBox('アクセス数', comma(rppClicks), treeRatio(rppClicks, prevM?.rppClicks), treeRatio(rppClicks, prevY?.rppClicks)) +
+    treeBox('転換率', pct(rppCvr), treeRatio(rppCvr, prevM?.rppCvr), treeRatio(rppCvr, prevY?.rppCvr)) +
+    treeBox('客単価', yen(rppUnitPrice), treeRatio(rppUnitPrice, prevM?.rppUnitPrice), treeRatio(rppUnitPrice, prevY?.rppUnitPrice)) +
+    // Level 3 right: non-RPP breakdown
+    treeBox('アクセス人数', comma(nonRppAccess), treeRatio(nonRppAccess, prevM?.nonRppAccess), treeRatio(nonRppAccess, prevY?.nonRppAccess)) +
+    treeBox('転換率', pct(nonRppCvr), treeRatio(nonRppCvr, prevM?.nonRppCvr), treeRatio(nonRppCvr, prevY?.nonRppCvr)) +
+    treeBox('客単価', yen(nonRppUnitPrice), treeRatio(nonRppUnitPrice, prevM?.nonRppUnitPrice), treeRatio(nonRppUnitPrice, prevY?.nonRppUnitPrice)) +
+    '</div></div>';
+  document.getElementById('salesTreeWrap').innerHTML = treeHtml;
+
+  // ── 日別 RPP経由/広告外 積み上げチャート ──
+  destroyChart('chartDailyRppSplit');
+  const rppSorted = [...rppData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  // Build daily map: date -> { rppSales, totalSales }
+  const dailyMap = {};
+  sorted.forEach(r => {
+    const d = r.date.replace(/\//g, '-');
+    dailyMap[d] = { total: r.sales, rpp: 0 };
+  });
+  rppSorted.forEach(r => {
+    const d = String(r.date).replace(/\//g, '-');
+    if (dailyMap[d]) dailyMap[d].rpp = r.sales;
+    else dailyMap[d] = { total: r.sales, rpp: r.sales };
+  });
+  const dailyDates = Object.keys(dailyMap).sort();
+  if (dailyDates.length > 0) {
+    const dayLabels = dailyDates.map(d => { const p = d.split(/[-\/]/); return p.length >= 3 ? parseInt(p[2]) : d; });
+    const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
+    const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
+
+    // イベントアノテーション生成（主要イベントのみ: マラソン/スーパーSALE/ワンダフルデー）
+    const eventAnnotations = {};
+    const evtColorMap = { 'マラソン': 'rgba(255,87,34,0.13)', 'スーパーSALE': 'rgba(234,67,53,0.15)', 'ワンダフルデー': 'rgba(76,175,80,0.12)' };
+    const majorEvents = (D.rakutenEvents || []).filter(evt => {
+      const t = evt.title || '';
+      return t.includes('マラソン') || t.includes('スーパーSALE') || t.includes('ワンダフルデー');
+    });
+    let evtIdx = 0;
+    majorEvents.forEach(evt => {
+      const eStart = evt.startDate ? evt.startDate.replace(/\//g, '-').substring(0, 10) : '';
+      const eEnd = evt.endDate ? evt.endDate.replace(/\//g, '-').substring(0, 10) : '';
+      if (!eStart) return;
+      const si = dailyDates.findIndex(d => d >= eStart);
+      const eiEnd = eEnd ? dailyDates.findIndex(d => d > eEnd) : si + 1;
+      if (si < 0) return;
+      const t = evt.title || '';
+      const color = t.includes('スーパーSALE') ? evtColorMap['スーパーSALE'] : t.includes('マラソン') ? evtColorMap['マラソン'] : evtColorMap['ワンダフルデー'];
+      const shortName = t.includes('スーパーSALE') ? 'SS' : t.includes('マラソン') ? 'マラソン' : 'WD';
+      eventAnnotations['evt' + evtIdx++] = {
+        type: 'box', xMin: si - 0.5, xMax: (eiEnd < 0 ? dailyDates.length : eiEnd) - 0.5,
+        backgroundColor: color, borderWidth: 0,
+        label: { display: true, content: shortName, position: 'start', font: { size: 9, weight: 'bold' }, color: '#c62828' }
+      };
+    });
+
+    // シェア予測データをマッピング
+    const shareMap = {};
+    (D.shareForecast || []).forEach(sf => { if (sf.date) shareMap[sf.date] = sf.share; });
+    const shareData = dailyDates.map(d => shareMap[d] !== undefined ? shareMap[d] : null);
+    const hasShare = shareData.some(v => v !== null);
+
+    const datasets = [
+      { label: 'RPP経由売上金額', data: rppDaySales, backgroundColor: 'rgba(66,133,244,0.7)', stack: 'a', yAxisID: 'y' },
+      { label: '広告外売上金額', data: nonRppDaySales, backgroundColor: 'rgba(234,179,8,0.7)', stack: 'a', yAxisID: 'y' },
+    ];
+    if (hasShare) {
+      datasets.push({
+        label: 'マーケ予測シェア%', data: shareData, type: 'line',
+        borderColor: '#e53935', backgroundColor: 'rgba(229,57,53,0.1)',
+        borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#e53935',
+        fill: false, tension: 0.3, yAxisID: 'y1', spanGaps: true,
+      });
+    }
+
+    chartInstances['chartDailyRppSplit'] = new Chart(document.getElementById('chartDailyRppSplit'), {
+      type: 'bar',
+      data: { labels: dayLabels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom' },
+          tooltip: { mode: 'index', callbacks: {
+            label: ctx => {
+              if (ctx.dataset.yAxisID === 'y1') return ctx.dataset.label + ': ' + ctx.raw + '%';
+              return ctx.dataset.label + ': ' + yen(ctx.raw);
+            },
+            footer: items => { const salesItems = items.filter(i => i.dataset.yAxisID !== 'y1'); return salesItems.length > 0 ? '合計: ' + yen(salesItems.reduce((s, i) => s + i.raw, 0)) : ''; }
+          }},
+          annotation: { annotations: eventAnnotations },
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
+          y1: hasShare ? { position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: 'シェア%', font: { size: 11 } } } : { display: false },
+        }
+      }
+    });
+  }
+
+
+}
+
+function aggregateProductMonth(months) {
+  const agg = {};
+  months.forEach(ym => {
+    (D.allItemByMonth[ym] || []).forEach(r => {
+      const mn = (r.manageNum || '').trim();
+      if (!mn) return;
+      if (!agg[mn]) agg[mn] = { manageNum: mn, sales: 0, orders: 0, access: 0, rppSpend: 0, rppSales: 0, rppClicks: 0, rppOrders: 0 };
+      agg[mn].sales += r.sales || 0;
+      agg[mn].orders += r.orders || 0;
+      agg[mn].access += r.access || 0;
+    });
+    (D.rppItemByMonth[ym] || []).forEach(r => {
+      const mn = (r.manageNum || '').trim();
+      if (!mn) return;
+      if (!agg[mn]) agg[mn] = { manageNum: mn, sales: 0, orders: 0, access: 0, rppSpend: 0, rppSales: 0, rppClicks: 0, rppOrders: 0 };
+      agg[mn].rppSpend += r.spend || 0;
+      agg[mn].rppSales += r.sales || 0;
+      agg[mn].rppClicks += r.clicks || 0;
+      agg[mn].rppOrders += r.orders || 0;
+    });
+  });
+  return agg;
+}
+
+function renderProductTab() {
+  const wrap = document.getElementById('productTableWrap');
+  const prodMonth = document.getElementById('monthFilter').value || 'all';
+
+  // 2025-10以降のデータのみ
+  const validMonths = D.months.filter(ym => ym >= '2025-10');
+  const targetMonths = prodMonth === 'all' ? validMonths : (validMonths.includes(prodMonth) ? [prodMonth] : []);
+
+  if (targetMonths.length === 0) {
+    wrap.innerHTML = '<div class="no-data">該当月のデータがありません</div>';
+    return;
+  }
+
+  // 商品管理番号ごとに集計
+  const productAgg = aggregateProductMonth(targetMonths);
+
+  // 前月比・前年同月比（月指定時のみ）
+  let prevMonthAgg = null, prevYearAgg = null;
+  const hasCmp = prodMonth !== 'all' && prodMonth;
+  if (hasCmp) {
+    const [y, m] = prodMonth.split('-').map(Number);
+    const pmYm = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+    const pyYm = (y - 1) + '-' + String(m).padStart(2, '0');
+    if (D.months.includes(pmYm)) prevMonthAgg = aggregateProductMonth([pmYm]);
+    if (D.months.includes(pyYm)) prevYearAgg = aggregateProductMonth([pyYm]);
+  }
+
+  const rows = Object.values(productAgg).map(p => {
+    const cvr = p.access > 0 ? (p.orders / p.access * 100) : 0;
+    const unitPrice = p.orders > 0 ? Math.round(p.sales / p.orders) : 0;
+    const rppRoas = p.rppSpend > 0 ? (p.rppSales / p.rppSpend * 100) : 0;
+    const rppCvr = p.rppClicks > 0 ? (p.rppOrders / p.rppClicks * 100) : 0;
+    const rppCpc = p.rppClicks > 0 ? Math.round(p.rppSpend / p.rppClicks) : 0;
+    return { ...p, cvr, unitPrice, rppRoas, rppCvr, rppCpc };
+  });
+
+  // 売上降順ソート
+  rows.sort((a, b) => b.sales - a.sales);
+
+  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
+
+  function cmpHtml(cur, prev) {
+    if (!prev || prev === 0) return '-';
+    const ch = ((cur - prev) / Math.abs(prev) * 100);
+    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+    return '<span style="' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(1) + '%</span>';
+  }
+
+  const cols = [
+    { label: '商品管理番号', key: 'manageNum', align: 'left', fmt: v => v, sticky: true },
+    { label: '売上', key: 'sales', fmt: v => yen(v) },
+    { label: '売上構成比', key: '_salesRatio', fmt: (v, r) => totalSales > 0 ? (r.sales / totalSales * 100).toFixed(1) + '%' : '-' },
+    { label: '件数', key: 'orders', fmt: v => comma(v) },
+    { label: 'アクセス', key: 'access', fmt: v => comma(v) },
+    { label: '転換率', key: 'cvr', fmt: v => v.toFixed(2) + '%' },
+    { label: '客単価', key: 'unitPrice', fmt: v => yen(v) },
+    { label: 'RPP費用', key: 'rppSpend', fmt: v => yen(v) },
+    { label: 'RPP売上', key: 'rppSales', fmt: v => yen(v) },
+    { label: 'RPP ROAS', key: 'rppRoas', fmt: v => v.toFixed(0) + '%' },
+    { label: 'RPP CVR', key: 'rppCvr', fmt: v => v.toFixed(2) + '%' },
+    { label: 'RPP CPC', key: 'rppCpc', fmt: v => yen(v) },
+  ];
+
+  // 前月比・前年同月比カラム追加（月指定時のみ）
+  if (hasCmp && (prevMonthAgg || prevYearAgg)) {
+    if (prevMonthAgg) cols.push({ label: '前月比(売上)', key: '_momSales', align: 'right' });
+    if (prevYearAgg) cols.push({ label: '前年同月比(売上)', key: '_yoySales', align: 'right' });
+  }
+
+  let html = '<table style="font-size:12px;width:100%"><thead><tr>';
+  cols.forEach(c => {
+    const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#f8f9fa;z-index:3;' : '';
+    html += '<th style="position:sticky;top:0;background:#f8f9fa;z-index:2;' + (c.sticky ? 'left:0;z-index:3;' : '') + 'text-align:' + (c.align || 'right') + ';cursor:pointer;white-space:nowrap" data-sort-key="' + c.key + '"><span>' + c.label + '</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  if (rows.length === 0) {
+    html += '<tr><td colspan="' + cols.length + '" style="text-align:center;padding:20px">データなし</td></tr>';
+  } else {
+    rows.forEach(r => {
+      html += '<tr>';
+      cols.forEach(c => {
+        const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#fff;z-index:1;' : '';
+        let val;
+        if (c.key === '_salesRatio') val = c.fmt(0, r);
+        else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
+        else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
+        else val = c.fmt(r[c.key]);
+        html += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+      });
+      html += '</tr>';
+    });
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+
+  // ソート機能
+  wrap.querySelectorAll('th[data-sort-key]').forEach(th => {
+    th.addEventListener('click', function() {
+      const key = this.dataset.sortKey;
+      const asc = this.dataset.sortDir === 'asc';
+      wrap.querySelectorAll('th').forEach(t => { delete t.dataset.sortDir; const si = t.querySelector('.sort-icon'); if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; } });
+      this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const si = this.querySelector('.sort-icon'); if (si) { si.textContent = asc ? '▼' : '▲'; si.style.opacity = '1'; si.style.color = 'var(--c-primary)'; }
+      const sorted = [...rows].sort((a, b) => {
+        let va, vb;
+        if (key === '_salesRatio') { va = a.sales; vb = b.sales; }
+        else if (key === '_momSales') { va = prevMonthAgg?.[a.manageNum]?.sales ? a.sales / prevMonthAgg[a.manageNum].sales : 0; vb = prevMonthAgg?.[b.manageNum]?.sales ? b.sales / prevMonthAgg[b.manageNum].sales : 0; }
+        else if (key === '_yoySales') { va = prevYearAgg?.[a.manageNum]?.sales ? a.sales / prevYearAgg[a.manageNum].sales : 0; vb = prevYearAgg?.[b.manageNum]?.sales ? b.sales / prevYearAgg[b.manageNum].sales : 0; }
+        else { va = typeof a[key] === 'string' ? a[key] : a[key] || 0; vb = typeof b[key] === 'string' ? b[key] : b[key] || 0; }
+        if (typeof va === 'string') return asc ? vb.localeCompare(va) : va.localeCompare(vb);
+        return asc ? vb - va : va - vb;
+      });
+      const tbody = wrap.querySelector('tbody');
+      tbody.innerHTML = '';
+      sorted.forEach(r => {
+        let tr = '<tr>';
+        cols.forEach(c => {
+          const stickyStyle = c.sticky ? 'position:sticky;left:0;background:#fff;z-index:1;' : '';
+          let val;
+          if (c.key === '_salesRatio') val = c.fmt(0, r);
+          else if (c.key === '_momSales') val = cmpHtml(r.sales, prevMonthAgg?.[r.manageNum]?.sales || 0);
+          else if (c.key === '_yoySales') val = cmpHtml(r.sales, prevYearAgg?.[r.manageNum]?.sales || 0);
+          else val = c.fmt(r[c.key]);
+          tr += '<td style="' + stickyStyle + 'text-align:' + (c.align || 'right') + '">' + val + '</td>';
+        });
+        tr += '</tr>';
+        tbody.innerHTML += tr;
+      });
+    });
+  });
+
+  // 月別推移テーブル
+  renderProductMonthlyTable();
+  // カテゴリ別実績
+  renderCategoryTable();
+}
+
+function renderCategoryTable() {
+  const wrap = document.getElementById('categoryTableWrap');
+  const prodMonth = document.getElementById('monthFilter').value || 'all';
+  const validMonths = D.months.filter(ym => ym >= '2025-10');
+  const targetMonths = prodMonth === 'all' ? validMonths : (validMonths.includes(prodMonth) ? [prodMonth] : []);
+
+  // ジャンル別に集約
+  const catAgg = {};
+  targetMonths.forEach(ym => {
+    (D.allItemByMonth[ym] || []).forEach(r => {
+      const genre = r.genre || '未分類';
+      if (!catAgg[genre]) catAgg[genre] = { genre, sales: 0, orders: 0, access: 0, products: new Set() };
+      catAgg[genre].sales += r.sales || 0;
+      catAgg[genre].orders += r.orders || 0;
+      catAgg[genre].access += r.access || 0;
+      if (r.manageNum) catAgg[genre].products.add(r.manageNum);
+    });
+  });
+
+  const rows = Object.values(catAgg).map(c => ({
+    genre: c.genre, sales: c.sales, orders: c.orders, access: c.access,
+    productCount: c.products.size,
+    cvr: c.access > 0 ? (c.orders / c.access * 100) : 0,
+    unitPrice: c.orders > 0 ? c.sales / c.orders : 0,
+  })).sort((a, b) => b.sales - a.sales);
+
+  const totalSales = rows.reduce((s, r) => s + r.sales, 0);
+
+  const catRows = rows.map(r => ({
+    ...r,
+    share: totalSales > 0 ? (r.sales / totalSales * 100) : 0,
+  }));
+
+  buildTable('categoryTableWrap', [
+    { key: 'genre', label: 'カテゴリ', fmt: v => safe(v) },
+    { key: 'productCount', label: '商品数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'share', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'access', label: 'アクセス', fmt: v => comma(v) },
+    { key: 'cvr', label: '転換率', fmt: v => v.toFixed(2) + '%' },
+    { key: 'unitPrice', label: '客単価', fmt: v => yen(Math.round(v)) },
+  ], catRows);
+
+  // カテゴリ別売上推移チャート
+  renderCategoryTrendChart(rows.slice(0, 8).map(r => r.genre));
+}
+
+function renderCategoryTrendChart(topGenres) {
+  destroyChart('chartCategoryTrend');
+  const validMonths = D.months.filter(ym => ym >= '2025-10').sort();
+  if (validMonths.length === 0 || topGenres.length === 0) return;
+
+  const colors = ['#4285f4','#ea4335','#fbbc04','#34a853','#ff6d01','#46bdc6','#7b1fa2','#c2185b'];
+  const datasets = topGenres.map((genre, gi) => {
+    const data = validMonths.map(ym => {
+      let sales = 0;
+      (D.allItemByMonth[ym] || []).forEach(r => {
+        if ((r.genre || '未分類') === genre) sales += r.sales || 0;
+      });
+      return sales;
+    });
+    return { label: genre.substring(0, 20), data, borderColor: colors[gi % colors.length], backgroundColor: colors[gi % colors.length] + '22', fill: false, tension: 0.3 };
+  });
+
+  chartInstances['chartCategoryTrend'] = new Chart(document.getElementById('chartCategoryTrend'), {
+    type: 'line',
+    data: { labels: validMonths.map(ym => D.monthLabels[ym] || ym), datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } } }
+    }
+  });
+}
+
+function renderProductMonthlyTable() {
+  const mWrap = document.getElementById('productMonthlyTableWrap');
+  if (!mWrap) return;
+  const metric = document.getElementById('productMetricSelect')?.value || 'sales';
+
+  const validMonths = D.months.filter(ym => ym >= '2025-10').slice().reverse(); // chronological
+  if (validMonths.length === 0) { mWrap.innerHTML = '<div class="no-data">データなし</div>'; return; }
+
+  // 各月 + 前月/前年同月のデータ
+  const allNeededMonths = new Set(validMonths);
+  validMonths.forEach(ym => {
+    const [y, m] = ym.split('-').map(Number);
+    const pm = m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+    const py = (y - 1) + '-' + String(m).padStart(2, '0');
+    allNeededMonths.add(pm);
+    allNeededMonths.add(py);
+  });
+  const monthAggs = {};
+  [...allNeededMonths].forEach(ym => { if (D.months.includes(ym)) monthAggs[ym] = aggregateProductMonth([ym]); });
+
+  const allMn = new Set();
+  validMonths.forEach(ym => { if (monthAggs[ym]) Object.keys(monthAggs[ym]).forEach(mn => allMn.add(mn)); });
+
+  const fmtMap = {
+    sales: v => yen(v), orders: v => comma(v), access: v => comma(v),
+    cvr: v => v.toFixed(2) + '%', unitPrice: v => yen(v),
+    rppSpend: v => yen(v), rppSales: v => yen(v), rppRoas: v => v.toFixed(0) + '%',
+  };
+  const fmt = fmtMap[metric] || (v => String(v));
+
+  const getVal = (agg, mn) => {
+    const p = agg?.[mn];
+    if (!p) return 0;
+    if (metric === 'cvr') return p.access > 0 ? (p.orders / p.access * 100) : 0;
+    if (metric === 'unitPrice') return p.orders > 0 ? Math.round(p.sales / p.orders) : 0;
+    if (metric === 'rppRoas') return p.rppSpend > 0 ? (p.rppSales / p.rppSpend * 100) : 0;
+    return p[metric] || 0;
+  };
+
+  function chgHtml(cur, prev) {
+    if (!prev || prev === 0) return '<span style="color:#999">-</span>';
+    const ch = ((cur - prev) / Math.abs(prev) * 100);
+    const cls = ch > 0.5 ? 'color:var(--c-success)' : ch < -0.5 ? 'color:var(--c-danger)' : '';
+    return '<span style="font-size:10px;' + cls + '">' + (ch > 0 ? '+' : '') + ch.toFixed(0) + '%</span>';
+  }
+
+  // 前月/前年同月YM算出
+  function getPrevYm(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return m === 1 ? (y - 1) + '-12' : y + '-' + String(m - 1).padStart(2, '0');
+  }
+  function getYoyYm(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return (y - 1) + '-' + String(m).padStart(2, '0');
+  }
+
+  const mnList = [...allMn].map(mn => {
+    const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
+    return { mn, total };
+  }).sort((a, b) => b.total - a.total).map(x => x.mn);
+
+  // ヘッダー: 各月に値+前月比+前年同月比
+  let html = '<table style="font-size:12px;width:100%;border-collapse:collapse"><thead><tr>';
+  html += '<th rowspan="2" style="text-align:left;position:sticky;left:0;top:0;background:#f8f9fa;z-index:4;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="mn"><span>商品管理番号</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
+  validMonths.forEach(ym => {
+    html += '<th colspan="3" style="text-align:center;position:sticky;top:0;background:#f8f9fa;z-index:2;border-bottom:1px solid #eee;white-space:nowrap">' + (D.monthLabels[ym] || ym) + '</th>';
+  });
+  html += '<th rowspan="2" style="position:sticky;top:0;background:#f8f9fa;z-index:2;cursor:pointer;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="total"><span>合計</span><span class="sort-icon" style="font-size:10px;margin-left:4px;opacity:0.3">⇅</span></th>';
+  html += '</tr><tr>';
+  validMonths.forEach(ym => {
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;cursor:pointer;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd" data-msort-key="' + ym + '"><span>値</span><span class="sort-icon" style="font-size:9px;margin-left:2px;opacity:0.3">⇅</span></th>';
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前月比</th>';
+    html += '<th style="position:sticky;top:28px;background:#f8f9fa;z-index:2;font-size:10px;white-space:nowrap;border-bottom:2px solid #ddd">前年比</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  function renderRow(mn) {
+    let tr = '<tr><td style="text-align:left;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap">' + mn + '</td>';
+    validMonths.forEach(ym => {
+      const v = getVal(monthAggs[ym], mn);
+      const pm = getPrevYm(ym);
+      const py = getYoyYm(ym);
+      const pv = monthAggs[pm] ? getVal(monthAggs[pm], mn) : 0;
+      const yv = monthAggs[py] ? getVal(monthAggs[py], mn) : 0;
+      tr += '<td style="text-align:right">' + fmt(v) + '</td>';
+      tr += '<td style="text-align:right">' + chgHtml(v, pv) + '</td>';
+      tr += '<td style="text-align:right">' + chgHtml(v, yv) + '</td>';
+    });
+    const total = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], mn), 0);
+    tr += '<td style="text-align:right;font-weight:600">' + fmt(total) + '</td></tr>';
+    return tr;
+  }
+
+  mnList.forEach(mn => { html += renderRow(mn); });
+  html += '</tbody></table>';
+  mWrap.innerHTML = html;
+
+  // ソート
+  mWrap.querySelectorAll('th[data-msort-key]').forEach(th => {
+    th.addEventListener('click', function() {
+      const key = this.dataset.msortKey;
+      const asc = this.dataset.sortDir === 'asc';
+      mWrap.querySelectorAll('th').forEach(t => { delete t.dataset.sortDir; const si = t.querySelector('.sort-icon'); if (si) { si.textContent = '⇅'; si.style.opacity = '0.3'; si.style.color = ''; } });
+      this.dataset.sortDir = asc ? 'desc' : 'asc';
+      const si = this.querySelector('.sort-icon'); if (si) { si.textContent = asc ? '▼' : '▲'; si.style.opacity = '1'; si.style.color = 'var(--c-primary)'; }
+      const sorted = [...mnList].sort((a, b) => {
+        if (key === 'mn') return asc ? b.localeCompare(a) : a.localeCompare(b);
+        if (key === 'total') {
+          const va = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], a), 0);
+          const vb = validMonths.reduce((s, ym) => s + getVal(monthAggs[ym], b), 0);
+          return asc ? vb - va : va - vb;
+        }
+        return asc ? getVal(monthAggs[key], b) - getVal(monthAggs[key], a) : getVal(monthAggs[key], a) - getVal(monthAggs[key], b);
+      });
+      const tbody = mWrap.querySelector('tbody');
+      tbody.innerHTML = '';
+      sorted.forEach(mn => { tbody.innerHTML += renderRow(mn); });
+    });
+  });
+}
+
+function getAllMonthData(dataByMonth) {
+  // 月次集計データ（日付なし）は全期間を返す
+  const all = [];
+  Object.values(dataByMonth || {}).forEach(arr => all.push(...arr));
+  return all;
+}
+function renderAdsTab() {
+  const adMonth = document.getElementById('monthFilter').value || 'all';
+  const rppData = getMonthData(D.rppByMonth, adMonth);
+  const tdaData = getMonthData(D.tdaByMonth, adMonth);
+  const adData = getMonthData(D.adByMonth, adMonth);
+  const cpaData = getMonthData(D.cpaByMonth || {}, adMonth);
+  const rppItemData = getMonthData(D.rppItemByMonth, adMonth);
+  // rpp_kw_raw: 月フィルター（getMonthData使用で日付範囲対応）
+  const rppKwData = getMonthData(D.rppKwByMonth, adMonth);
+
+  const cmpYm = getCompareMonth(adMonth, compareMode);
+
+  const rppSpend = sumField(rppData, 'spend');
+  const rppSales = sumField(rppData, 'sales');
+  const rppClicks = sumField(rppData, 'clicks');
+  const rppOrders = sumField(rppData, 'orders');
+  const tdaSpend = sumField(tdaData, 'spend');
+  const tdaSales = sumField(tdaData, 'sales');
+  const tdaClicks = sumField(tdaData, 'clicks');
+  const adSpend = sumField(adData, 'spend');
+  const adSales = sumField(adData, 'sales');
+  const adClicks = sumField(adData, 'clicks');
+  const cpaSpend = sumField(cpaData, 'spend');
+  const cpaSales = sumField(cpaData, 'sales');
+
+  const totalSpend = rppSpend + tdaSpend + adSpend + cpaSpend;
+  const totalSales = rppSales + tdaSales + adSales + cpaSales;
+  const totalRoas = totalSpend > 0 ? (totalSales / totalSpend * 100) : 0;
+
+  // Compare
+  let cTotalSpend = null, cTotalSales = null;
+  if (cmpYm) {
+    const cr = getMonthData(D.rppByMonth, cmpYm);
+    const ct = getMonthData(D.tdaByMonth, cmpYm);
+    const ca = getMonthData(D.adByMonth, cmpYm);
+    const cc = getMonthData(D.cpaByMonth || {}, cmpYm);
+    cTotalSpend = sumField(cr,'spend') + sumField(ct,'spend') + sumField(ca,'spend') + sumField(cc,'spend');
+    cTotalSales = sumField(cr,'sales') + sumField(ct,'sales') + sumField(ca,'sales') + sumField(cc,'sales');
+  }
+
+  // TACOS = 広告費 / 全体売上
+  const storeSalesData = getMonthData(D.allByMonth, adMonth);
+  const storeTotalSales = sumField(storeSalesData, 'sales');
+  const tacos = storeTotalSales > 0 ? (totalSpend / storeTotalSales * 100) : 0;
+
+  document.getElementById('adCards').innerHTML = [
+    { label: '広告費合計', value: yen(totalSpend), change: calcChange(totalSpend, cTotalSpend) },
+    { label: '広告経由売上', value: yen(totalSales), change: calcChange(totalSales, cTotalSales) },
+    { label: '全体ROAS', value: totalRoas.toFixed(0) + '%' },
+    { label: 'TACOS', value: tacos.toFixed(1) + '%', sub: '広告費/売上' },
+  ].map(c =>
+    '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' +
+    (c.sub ? '<div class="metric-sub">' + c.sub + '</div>' : '') +
+    (c.change !== undefined && c.change !== null ? changeHtml(c.change) : '') + '</div>'
+  ).join('');
+
+  // RPP KPIs - 全体/商品入札(全体−KW)/KW入札 の3分解
+  const rppKwSpendTotal = sumField(rppKwData, 'spend');
+  const rppKwSalesTotal = sumField(rppKwData, 'sales');
+  const rppKwClicksTotal = sumField(rppKwData, 'clicks');
+  const rppKwOrdersTotal = sumField(rppKwData, 'orders');
+  const rppItemOnlySpend = rppSpend - rppKwSpendTotal;
+  const rppItemOnlySales = rppSales - rppKwSalesTotal;
+  const rppItemOnlyClicks = rppClicks - rppKwClicksTotal;
+  const rppItemOnlyOrders = rppOrders - rppKwOrdersTotal;
+
+  const rppCvr = rppClicks > 0 ? (rppOrders / rppClicks * 100) : 0;
+  const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
+  const rppCpc = rppClicks > 0 ? rppSpend / rppClicks : 0;
+
+  const makeRow = (label, spend, sales, clicks, orders, ratio) => {
+    const roas = spend > 0 ? (sales / spend * 100).toFixed(0) : 0;
+    const cvr = clicks > 0 ? (orders / clicks * 100).toFixed(2) : '0.00';
+    const cpc = clicks > 0 ? Math.round(spend / clicks) : 0;
+    const ratioStr = ratio !== null ? ratio.toFixed(1) + '%' : '-';
+    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + ratioStr + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
+  };
+  const itemRatio = rppSpend > 0 ? (rppItemOnlySpend / rppSpend * 100) : 0;
+  const kwRatio = rppSpend > 0 ? (rppKwSpendTotal / rppSpend * 100) : 0;
+  document.getElementById('rppKpiRow').innerHTML =
+    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:9%"><col style="width:13%"><col style="width:8%"><col style="width:15%"><col style="width:11%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>費用比率</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
+    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders, null) +
+    makeRow('商品入札', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio) +
+    makeRow('KW入札', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
+    '</tbody></table></div>';
+
+  // RPP Item table
+  const rppItemAgg = {};
+  rppItemData.forEach(r => {
+    const k = r.name;
+    if (!rppItemAgg[k]) rppItemAgg[k] = { name: k, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    rppItemAgg[k].spend += r.spend; rppItemAgg[k].sales += r.sales;
+    rppItemAgg[k].clicks += r.clicks; rppItemAgg[k].orders += r.orders;
+  });
+  const rppItems = Object.values(rppItemAgg).map(r => ({
+    ...r,
+    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
+    cvr: r.clicks > 0 ? Math.round(r.orders / r.clicks * 10000) / 100 : 0,
+    cpc: r.clicks > 0 ? Math.round(r.spend / r.clicks) : 0,
+  })).sort((a, b) => b.sales - a.sales);
+  buildTable('rppItemTableWrap', [
+    { key: 'name', label: '商品名', fmt: v => safe(String(v).substring(0, 50)) },
+    { key: 'spend', label: '費用', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+    { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
+  ], rppItems, { limit: 50 });
+
+  // RPP KW table - 商品ごとにKWをグループ表示
+  const rppKwByProd = {};
+  rppKwData.forEach(r => {
+    const prod = r.name || r.manageNum || '不明';
+    if (!rppKwByProd[prod]) rppKwByProd[prod] = { name: prod, totalSpend: 0, totalSales: 0, totalClicks: 0, totalOrders: 0, kws: {} };
+    rppKwByProd[prod].totalSpend += r.spend; rppKwByProd[prod].totalSales += r.sales;
+    rppKwByProd[prod].totalClicks += r.clicks; rppKwByProd[prod].totalOrders += r.orders;
+    const kw = r.kw || '不明';
+    if (!rppKwByProd[prod].kws[kw]) rppKwByProd[prod].kws[kw] = { kw, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    rppKwByProd[prod].kws[kw].spend += r.spend; rppKwByProd[prod].kws[kw].sales += r.sales;
+    rppKwByProd[prod].kws[kw].clicks += r.clicks; rppKwByProd[prod].kws[kw].orders += r.orders;
+  });
+  const rppKwRows = [];
+  Object.values(rppKwByProd).sort((a, b) => b.totalSpend - a.totalSpend).forEach(prod => {
+    // Product header row
+    rppKwRows.push({ isHeader: true, name: prod.name, kw: '', spend: prod.totalSpend, sales: prod.totalSales, clicks: prod.totalClicks, orders: prod.totalOrders,
+      roas: prod.totalSpend > 0 ? Math.round(prod.totalSales / prod.totalSpend * 100) : 0,
+      cvr: prod.totalClicks > 0 ? Math.round(prod.totalOrders / prod.totalClicks * 10000) / 100 : 0,
+      cpc: prod.totalClicks > 0 ? Math.round(prod.totalSpend / prod.totalClicks) : 0 });
+    // KW rows sorted by spend
+    Object.values(prod.kws).sort((a, b) => b.spend - a.spend).forEach(kw => {
+      rppKwRows.push({ isHeader: false, name: '', kw: kw.kw, spend: kw.spend, sales: kw.sales, clicks: kw.clicks, orders: kw.orders,
+        roas: kw.spend > 0 ? Math.round(kw.sales / kw.spend * 100) : 0,
+        cvr: kw.clicks > 0 ? Math.round(kw.orders / kw.clicks * 10000) / 100 : 0,
+        cpc: kw.clicks > 0 ? Math.round(kw.spend / kw.clicks) : 0 });
+    });
+  });
+  // KW table with sortable columns
+  const kwFlatRows = rppKwRows.map(r => ({
+    label: r.isHeader ? r.name : '　' + r.kw,
+    spend: r.spend, sales: r.sales, clicks: r.clicks, orders: r.orders,
+    cpc: r.cpc, cvr: r.cvr, roas: r.roas, _isHeader: r.isHeader,
+  }));
+  buildTable('rppKwTableWrap', [
+    { key: 'label', label: '商品 / キーワード', fmt: (v, row) => row._isHeader ? '<b>' + safe(String(v).substring(0, 45)) + '</b>' : '<span style="padding-left:16px;color:#555">' + safe(v) + '</span>' },
+    { key: 'spend', label: '費用', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
+    { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+  ], kwFlatRows, { limit: 200 });
+
+  // TDA
+  const tdaTotalOrders = sumField(tdaData, 'orders');
+  const tdaTotalImps = sumField(tdaData, 'imps');
+  document.getElementById('tdaKpiRow').innerHTML = [
+    { label: '費用', value: yen(tdaSpend) },
+    { label: '売上', value: yen(tdaSales) },
+    { label: 'ROAS', value: (tdaSpend > 0 ? (tdaSales/tdaSpend*100).toFixed(0) : 0) + '%' },
+    { label: 'Vimp', value: comma(tdaTotalImps) },
+    { label: 'クリック', value: comma(tdaClicks) },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  const tdaCampAgg = {};
+  tdaData.forEach(r => {
+    const k = r.campaign;
+    if (!tdaCampAgg[k]) tdaCampAgg[k] = { campaign: k, spend: 0, sales: 0, clicks: 0, imps: 0, orders: 0, newSales: 0, existSales: 0 };
+    tdaCampAgg[k].spend += r.spend; tdaCampAgg[k].sales += r.sales;
+    tdaCampAgg[k].clicks += r.clicks; tdaCampAgg[k].imps += r.imps;
+    tdaCampAgg[k].orders += r.orders; tdaCampAgg[k].newSales += r.newSales;
+    tdaCampAgg[k].existSales += r.existSales;
+  });
+  const tdaCampaigns = Object.values(tdaCampAgg).map(r => ({
+    ...r,
+    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
+    ctr: r.imps > 0 ? Math.round(r.clicks / r.imps * 10000) / 100 : 0,
+  })).sort((a, b) => b.sales - a.sales);
+  buildTable('tdaTableWrap', [
+    { key: 'campaign', label: 'キャンペーン', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'spend', label: '費用', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'imps', label: 'Vimp', fmt: v => comma(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+    { key: 'ctr', label: 'CTR', fmt: v => pct(v) },
+  ], tdaCampaigns, { limit: 30 });
+
+  // ad_raw
+  const adTotalOrders = sumField(adData, 'orders');
+  document.getElementById('adRakutenKpiRow').innerHTML = [
+    { label: '広告費', value: yen(adSpend) },
+    { label: '売上', value: yen(adSales) },
+    { label: 'ROAS', value: (adSpend > 0 ? (adSales/adSpend*100).toFixed(0) : 0) + '%' },
+    { label: 'クリック', value: comma(adClicks) },
+    { label: '件数', value: comma(adTotalOrders) },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  const adProdAgg = {};
+  adData.forEach(r => {
+    const k = r.product;
+    if (!adProdAgg[k]) adProdAgg[k] = { product: k, spend: 0, sales: 0, clicks: 0, orders: 0, newCust: 0, newSales: 0 };
+    adProdAgg[k].spend += r.spend; adProdAgg[k].sales += r.sales;
+    adProdAgg[k].clicks += r.clicks; adProdAgg[k].orders += r.orders;
+    adProdAgg[k].newCust += r.newCust; adProdAgg[k].newSales += r.newSales;
+  });
+  const adProducts = Object.values(adProdAgg).map(r => ({
+    ...r,
+    roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
+  })).sort((a, b) => b.sales - a.sales);
+  buildTable('adRakutenTableWrap', [
+    { key: 'product', label: '広告商品名', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'spend', label: '広告費', fmt: v => yen(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
+    { key: 'newCust', label: '新規獲得', fmt: v => comma(v) },
+  ], adProducts, { limit: 30 });
+
+  // CPA広告
+  document.getElementById('cpaKpiRow').innerHTML = [
+    { label: '請求額', value: yen(cpaSpend) },
+    { label: '経由売上', value: yen(cpaSales) },
+    { label: 'ROAS', value: (cpaSpend > 0 ? (cpaSales/cpaSpend*100).toFixed(0) : 0) + '%' },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  // アフィリエイト
+  const afiData = getMonthData(D.afiByMonth, adMonth);
+  const afiTotalSales = sumField(afiData, 'sales');
+  const afiTotalReward = sumField(afiData, 'reward');
+  document.getElementById('afiKpiRow').innerHTML = [
+    { label: '成果件数', value: comma(afiData.length) },
+    { label: '売上金額', value: yen(afiTotalSales) },
+    { label: '成果報酬', value: yen(afiTotalReward) },
+    { label: '報酬率', value: afiTotalSales > 0 ? pct(afiTotalReward / afiTotalSales * 100) : '0%' },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  // Affiliate by product
+  const afiAgg = {};
+  afiData.forEach(r => {
+    const k = r.product || r.manageNum || '不明';
+    if (!afiAgg[k]) afiAgg[k] = { product: k, sales: 0, reward: 0, count: 0 };
+    afiAgg[k].sales += r.sales; afiAgg[k].reward += r.reward; afiAgg[k].count += 1;
+  });
+  const afiProducts = Object.values(afiAgg).sort((a, b) => b.sales - a.sales);
+  buildTable('afiByProductTableWrap', [
+    { key: 'product', label: '商品名', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'count', label: '件数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'reward', label: '報酬', fmt: v => yen(v) },
+  ], afiProducts, { limit: 30 });
+
+  // Affiliate by rate with ratio
+  const afiRateData = (D.afiByRateRows || []).slice();
+  const afiRateTotalSales = afiRateData.reduce((s, r) => s + (r.sales || 0), 0);
+  const afiRateWithRatio = afiRateData.map(r => ({ ...r, salesRatio: afiRateTotalSales > 0 ? (r.sales / afiRateTotalSales * 100) : 0 }));
+  buildTable('afiByRateTableWrap', [
+    { key: 'rate', label: '料率', fmt: v => safe(v) },
+    { key: 'count', label: '件数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'salesRatio', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
+    { key: 'reward', label: '報酬', fmt: v => yen(v) },
+  ], afiRateWithRatio, { limit: 20 });
+
+  // Affiliate rate pie chart
+  destroyChart('chartAfiRatePie');
+  const pieColors = ['#1a3a5c','#e8734a','#f5b041','#2ecc71','#3498db','#9b59b6','#e74c3c','#1abc9c','#34495e','#f39c12'];
+  if (afiRateWithRatio.length > 0) {
+    chartInstances['chartAfiRatePie'] = new Chart(document.getElementById('chartAfiRatePie'), {
+      type: 'doughnut',
+      data: {
+        labels: afiRateWithRatio.map(r => r.rate),
+        datasets: [{ data: afiRateWithRatio.map(r => r.sales), backgroundColor: afiRateWithRatio.map((_, i) => pieColors[i % pieColors.length]) }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } }, tooltip: { callbacks: { label: function(ctx) { return ctx.label + ': ' + yen(ctx.raw) + ' (' + (afiRateTotalSales > 0 ? (ctx.raw / afiRateTotalSales * 100).toFixed(1) : 0) + '%)'; } } } } }
+    });
+  }
+}
+
+function renderAcqTab() {
+  const crmMonth = document.getElementById('monthFilter').value || 'all';
+  const lineData = getMonthData(D.lineByMonth, crmMonth);
+
+  // LINE KPIs
+  const lineTotalSent = sumField(lineData, 'sent');
+  const lineTotalSales = sumField(lineData, 'sales');
+  const lineTotalConversions = sumField(lineData, 'conversions');
+  const lineTotalVisitors = sumField(lineData, 'visitors');
+  const lineTotalOpened = sumField(lineData, 'opened');
+  const lineAvgOpenRate = lineTotalSent > 0 ? (lineTotalOpened / lineTotalSent * 100) : 0;
+  const lineAvgCvr = lineTotalVisitors > 0 ? (lineTotalConversions / lineTotalVisitors * 100) : 0;
+  const lineSalesPerSend = lineTotalSent > 0 ? lineTotalSales / lineTotalSent : 0;
+  document.getElementById('lineKpiRow').innerHTML = [
+    { label: '配信数', value: comma(lineData.length) + '回' },
+    { label: '配信通数', value: comma(lineTotalSent) },
+    { label: '平均開封率', value: pct1(lineAvgOpenRate) },
+    { label: '訪問者数', value: comma(lineTotalVisitors) },
+    { label: '転換率', value: pct(lineAvgCvr) },
+    { label: '売上合計', value: yen(lineTotalSales) },
+    { label: '売上/通', value: yen(Math.round(lineSalesPerSend * 10) / 10) },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  // LINE trend chart
+  destroyChart('chartLineTrend');
+  const lineSorted = [...lineData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (lineSorted.length > 0) {
+    chartInstances['chartLineTrend'] = new Chart(document.getElementById('chartLineTrend'), {
+      type: 'bar',
+      data: {
+        labels: lineSorted.map(r => { const d = String(r.date).substring(0, 10); return d; }),
+        datasets: [
+          { label: '売上', data: lineSorted.map(r => r.sales), backgroundColor: 'rgba(26,58,92,0.6)', yAxisID: 'y', order: 1 },
+          { label: '訪問者', data: lineSorted.map(r => r.visitors), type: 'line', borderColor: '#06b6d4', yAxisID: 'y1', tension: 0.3, pointRadius: 2, order: 0 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top' }, title: { display: true, text: '配信別 売上・訪問者推移' } },
+        scales: {
+          y: { position: 'left', ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } },
+          y1: { position: 'right', grid: { drawOnChartArea: false } }
+        }
+      }
+    });
+  }
+
+  // LINE performance chart (open rate vs cvr)
+  destroyChart('chartLinePerf');
+  if (lineSorted.length > 0) {
+    chartInstances['chartLinePerf'] = new Chart(document.getElementById('chartLinePerf'), {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: '開封率 vs 転換率',
+          data: lineSorted.map(r => ({
+            x: r.sent > 0 ? (r.opened / r.sent * 100) : 0,
+            y: r.visitors > 0 ? (r.conversions / r.visitors * 100) : 0,
+            title: r.title,
+          })),
+          backgroundColor: 'rgba(26,58,92,0.6)',
+          pointRadius: 6, pointHoverRadius: 8,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          title: { display: true, text: '開封率 vs 転換率' },
+          tooltip: { callbacks: { label: ctx => (ctx.raw.title || '') + ' 開封:' + ctx.raw.x.toFixed(1) + '% CVR:' + ctx.raw.y.toFixed(1) + '%' } }
+        },
+        scales: {
+          x: { title: { display: true, text: '開封率(%)' } },
+          y: { title: { display: true, text: '転換率(%)' }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // LINE message table
+  const lineForTable = [...lineData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  buildTable('lineTableWrap', [
+    { key: 'date', label: '配信日時', fmt: v => safe(String(v).substring(0, 16)) },
+    { key: 'title', label: 'タイトル', fmt: v => safe(String(v).substring(0, 35)) },
+    { key: 'sent', label: '配信通数', fmt: v => comma(v) },
+    { key: 'openRate', label: '開封率', fmt: v => safe(v) },
+    { key: 'visitors', label: '訪問者', fmt: v => comma(v) },
+    { key: 'conversions', label: '転換数', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'salesPerSend', label: '売上/通', fmt: v => yen(Math.round(v * 10) / 10) },
+  ], lineForTable, { limit: 50 });
+
+  // Mail KPIs + table - 月フィルター適用
+  const allMailData = D.mailParsed || [];
+  const mailFiltered = allMailData.filter(r => r.date === crmMonth);
+  const mailData = mailFiltered.length > 0 ? mailFiltered : allMailData;
+  const mailTotalSent = sumField(mailData, 'sent');
+  const mailTotalOpened = sumField(mailData, 'opened');
+  const mailTotalClicks = sumField(mailData, 'clicks');
+  const mailTotalSales = sumField(mailData, 'sales');
+  const mailTotalOrders = sumField(mailData, 'orders');
+  document.getElementById('mailKpiRow').innerHTML = [
+    { label: '配信数', value: comma(mailTotalSent) },
+    { label: '開封数', value: comma(mailTotalOpened) },
+    { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
+    { label: 'クリック数', value: comma(mailTotalClicks) },
+    { label: '売上', value: yen(mailTotalSales) },
+    { label: '転換数', value: comma(mailTotalOrders) },
+    { label: '転換率', value: mailTotalSent > 0 ? (mailTotalOrders / mailTotalSent * 100).toFixed(2) + '%' : '-' },
+  ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
+
+  const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  buildTable('mailTableWrap', [
+    { key: 'date', label: '年月', fmt: v => { const ym = String(v); return D.monthLabels[ym] || ym; } },
+    { key: 'sent', label: '配信数', fmt: v => comma(v) },
+    { key: 'opened', label: '開封数', fmt: v => comma(v) },
+    { key: 'openRate', label: '開封率', fmt: v => safe(v) },
+    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'orders', label: '転換数', fmt: v => comma(v) },
+    { key: 'convRate', label: '転換率', fmt: v => safe(v) },
+  ], mailSorted, { limit: 50 });
+}
+
+function renderRepeatTab() {
+  if (!D.hasOrders) {
+    document.getElementById('repeatCards').innerHTML = '<div class="no-data">受注データなし（order_rawの読み取りに失敗した可能性があります）</div>';
+    return;
+  }
+
+  // Product filter
+  const rpSel = document.getElementById('repeatProductFilter');
+  if (rpSel.options.length <= 1 && D.orderItems) {
+    const items = new Set();
+    D.orderItems.forEach(r => { if (r.i) items.add(r.i); });
+    [...items].sort().forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      rpSel.appendChild(opt);
+    });
+  }
+  const filterItem = rpSel ? rpSel.value : '';
+
+  // Filter orders by product if selected
+  const oi = D.orderItems || [];
+  const filtered = filterItem ? oi.filter(r => r.i === filterItem) : oi;
+
+  // Compute repeat analysis from filtered data
+  const custOrders = {};
+  filtered.forEach(r => {
+    if (!r.e) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+  const custFirst = {};
+  Object.entries(custOrders).forEach(([email, ords]) => {
+    const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
+    custFirst[email] = sorted[0]?.d || '';
+  });
+  const custCounts = {};
+  Object.entries(custOrders).forEach(([email, ords]) => {
+    const uniqueNums = [...new Set(ords.map(o => o.n).filter(Boolean))];
+    custCounts[email] = uniqueNums.length || 1;
+  });
+
+  const totalCust = Object.keys(custCounts).length;
+  const firstTimersCnt = Object.values(custCounts).filter(c => c === 1).length;
+  const repeatersCnt = totalCust - firstTimersCnt;
+  const f2RateVal = totalCust > 0 ? (repeatersCnt / totalCust * 100) : 0;
+
+  document.getElementById('repeatCards').innerHTML = [
+    { label: '総顧客数', value: comma(totalCust) },
+    { label: 'F1（初回購入）', value: comma(totalCust) },
+    { label: 'F2（2回目購入）', value: comma(repeatersCnt) },
+    { label: 'F2転換率', value: pct(f2RateVal), sub: 'F2÷F1' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + c.sub + '</div>' : '') + '</div>').join('');
+
+  // Monthly NR - order_rawから算出
+  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\//g, '-'); const m2 = s.match(/^(\d{4})-(\d{1,2})/); return m2 ? m2[1] + '-' + m2[2].padStart(2, '0') : ''; };
+  // 全order_rawから顧客の初回購入月を算出（フィルタ前のデータで計算）
+  const allCustFirst = {};
+  (D.orderItems || []).forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!allCustFirst[r.e] || r.d < allCustFirst[r.e]) allCustFirst[r.e] = r.d;
+  });
+  const monthlyNR = {};
+  filtered.forEach(r => {
+    if (!r.e || !r.d) return;
+    const ym = toYmClient(r.d);
+    if (!ym) return;
+    if (!monthlyNR[ym]) monthlyNR[ym] = { newC: new Set(), repC: new Set() };
+    const firstYM = toYmClient(allCustFirst[r.e]);
+    if (firstYM === ym) monthlyNR[ym].newC.add(r.e);
+    else monthlyNR[ym].repC.add(r.e);
+  });
+  const nr = Object.entries(monthlyNR).map(([m, v]) => ({ month: m, newCust: v.newC.size, repeatCust: v.repC.size })).sort((a, b) => a.month.localeCompare(b.month));
+
+  destroyChart('chartMonthlyNR');
+  destroyChart('chartRepeatRateTrend');
+  if (nr.length > 0) {
+    const nrLabels = nr.map(r => D.monthLabels[r.month] || r.month);
+    const nrTotals = nr.map(r => r.newCust + r.repeatCust);
+    const nrRepeatRates = nr.map(r => { const t = r.newCust + r.repeatCust; return t > 0 ? Math.round(r.repeatCust / t * 1000) / 10 : 0; });
+
+    chartInstances['chartMonthlyNR'] = new Chart(document.getElementById('chartMonthlyNR'), {
+      type: 'bar',
+      data: {
+        labels: nrLabels,
+        datasets: [
+          { label: '新規', data: nr.map(r => r.newCust), backgroundColor: '#1a3a5c', stack: 'a', yAxisID: 'y', order: 2 },
+          { label: 'リピート', data: nr.map(r => r.repeatCust), backgroundColor: '#FF9800', stack: 'a', yAxisID: 'y', order: 2 },
+          { label: 'リピート率', data: nrRepeatRates, type: 'line', borderColor: '#e53935', backgroundColor: 'transparent', pointRadius: 4, pointBackgroundColor: '#e53935', borderWidth: 3, tension: 0.3, yAxisID: 'y1', order: 0 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: { callbacks: { label: ctx => { if (ctx.dataset.label === 'リピート率') return 'リピート率: ' + ctx.raw + '%'; return ctx.dataset.label + ': ' + comma(ctx.raw) + '人'; } } }
+        },
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true, title: { display: true, text: '顧客数' } },
+          y1: { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, title: { display: true, text: 'リピート率(%)' }, ticks: { callback: v => v + '%' } }
+        }
+      }
+    });
+
+    // 月別テーブル（ソート対応）
+    const nrTableRows = nr.map((r, i) => {
+      const total = r.newCust + r.repeatCust;
+      const rate = total > 0 ? Math.round(r.repeatCust / total * 1000) / 10 : 0;
+      return { month: nrLabels[i], monthSort: r.month, newCust: r.newCust, repeatCust: r.repeatCust, total, rate };
+    });
+    buildTable('monthlyNRTable', [
+      { key: 'month', label: '月', fmt: v => v },
+      { key: 'newCust', label: '新規', fmt: v => comma(v) },
+      { key: 'repeatCust', label: 'リピート', fmt: v => comma(v) },
+      { key: 'total', label: '合計', fmt: v => comma(v) },
+      { key: 'rate', label: 'リピート率', fmt: v => '<span style="font-weight:600">' + v.toFixed(1) + '%</span>' },
+    ], nrTableRows);
+
+    // リピート率推移折れ線チャート
+    chartInstances['chartRepeatRateTrend'] = new Chart(document.getElementById('chartRepeatRateTrend'), {
+      type: 'line',
+      data: {
+        labels: nrLabels,
+        datasets: [{ label: 'リピート率', data: nrRepeatRates, borderColor: '#e53935', backgroundColor: 'rgba(229,57,53,0.1)', fill: true, pointRadius: 4, pointBackgroundColor: '#e53935', tension: 0.3 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => 'リピート率: ' + ctx.raw + '%' } } },
+        scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } }
+      }
+    });
+  }
+
+  // Purchase distribution
+  const purchaseDist = {};
+  Object.values(custCounts).forEach(cnt => {
+    const bucket = cnt >= 10 ? '10+' : String(cnt);
+    purchaseDist[bucket] = (purchaseDist[bucket] || 0) + 1;
+  });
+  const purchaseDistRows = Object.entries(purchaseDist)
+    .sort((a, b) => (a[0] === '10+' ? 999 : Number(a[0])) - (b[0] === '10+' ? 999 : Number(b[0])))
+    .map(([cnt, customers]) => ({ cnt, customers }));
+
+  destroyChart('chartPurchaseDist');
+  if (purchaseDistRows.length > 0) {
+    chartInstances['chartPurchaseDist'] = new Chart(document.getElementById('chartPurchaseDist'), {
+      type: 'bar',
+      data: {
+        labels: purchaseDistRows.map(r => r.cnt + '回'),
+        datasets: [{ label: '顧客数', data: purchaseDistRows.map(r => r.customers), backgroundColor: '#1a73e8' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  // Repeat item ranking (use precomputed for all, recompute for filtered)
+  if (!filterItem) {
+    buildTable('repeatItemTableWrap', [
+      { key: 'item', label: '商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'totalBuyers', label: '購入者数', fmt: v => comma(v) },
+      { key: 'repeatBuyers', label: 'リピーター数', fmt: v => comma(v) },
+      { key: 'repeatRate', label: 'リピート率', fmt: v => pct1(v) },
+      { key: 'totalPurchases', label: '総購入回数', fmt: v => comma(v) },
+    ], D.repeatAnalysis.repeatItemRows || [], { limit: 30 });
+
+    buildTable('entryItemF2TableWrap', [
+      { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
+      { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
+      { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + pct1(v) + '</span>' },
+      { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+    ], D.repeatAnalysis.entryItemF2Rows || [], { limit: 30 });
+  } else {
+    // For filtered product: show which other products this product's buyers also buy
+    const buyerEmails = Object.keys(custOrders);
+    const otherItems = {};
+    D.orderItems.forEach(r => {
+      if (!buyerEmails.includes(r.e) || r.i === filterItem || !r.i) return;
+      if (!otherItems[r.i]) otherItems[r.i] = { item: r.i, count: 0, buyers: new Set() };
+      otherItems[r.i].count++;
+      otherItems[r.i].buyers.add(r.e);
+    });
+    const otherRows = Object.values(otherItems).map(r => ({ item: r.item, buyers: r.buyers.size, count: r.count })).sort((a, b) => b.buyers - a.buyers).slice(0, 30);
+    buildTable('repeatItemTableWrap', [
+      { key: 'item', label: '同一顧客が購入した他商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'buyers', label: '重複顧客数', fmt: v => comma(v) },
+      { key: 'count', label: '購入回数', fmt: v => comma(v) },
+    ], otherRows, { limit: 30 });
+
+    document.getElementById('entryItemF2TableWrap').innerHTML = '';
+  }
+}
+
+function renderBasketTab() {
+  if (!D.hasOrders) {
+    document.getElementById('basketCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+  const ba = D.basketAnalysis;
+  document.getElementById('basketCards').innerHTML = [
+    { label: '総注文数', value: comma(ba.totalOrders) },
+    { label: '平均購入点数/注文', value: ba.avgUnitsPerOrder.toFixed(1) },
+    { label: '平均注文単価', value: yen(ba.avgOrderPrice) },
+    { label: 'クロスセル率', value: pct(ba.crossSellRate) },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  // Units distribution chart
+  destroyChart('chartUnitsDist');
+  if (ba.unitsDistRows.length > 0) {
+    chartInstances['chartUnitsDist'] = new Chart(document.getElementById('chartUnitsDist'), {
+      type: 'bar',
+      data: {
+        labels: ba.unitsDistRows.map(r => r.units + '点'),
+        datasets: [{ label: '注文数', data: ba.unitsDistRows.map(r => r.count), backgroundColor: '#7b1fa2' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  // Pairs table
+  buildTable('basketPairsTable', [
+    { key: 'a', label: '商品A', fmt: v => safe(String(v).substring(0, 30)) },
+    { key: 'b', label: '商品B', fmt: v => safe(String(v).substring(0, 30)) },
+    { key: 'count', label: '回数', fmt: v => comma(v) },
+  ], ba.topPairs, { limit: 20 });
+
+  // Product selector for co-purchase
+  const sel = document.getElementById('basketProductSelect');
+  if (sel.options.length <= 1 && ba.basketProducts) {
+    ba.basketProducts.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      sel.appendChild(opt);
+    });
+  }
+  renderCoProducts();
+}
+
+function renderLTVTab() {
+  if (!D.hasOrders) {
+    document.getElementById('cust-ltv').querySelectorAll('.section-box').forEach(el => {
+      el.innerHTML = '<div class="no-data">受注データなし</div>';
+    });
+    return;
+  }
+
+  // Product filter
+  const ltvSel = document.getElementById('ltvProductFilter');
+  if (ltvSel.options.length <= 1 && D.orderItems) {
+    const items = new Set();
+    D.orderItems.forEach(r => { if (r.i) items.add(r.i); });
+    [...items].sort().forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p; opt.textContent = p;
+      ltvSel.appendChild(opt);
+    });
+  }
+  const filterItem = ltvSel ? ltvSel.value : '';
+
+  const oi = D.orderItems || [];
+  const toYmClient = d => { if (!d) return ''; const s = String(d).replace(/\//g, '-'); const m = s.match(/^(\d{4})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') : ''; };
+
+  // If filtered, recompute LTV data for customers who bought that product
+  let countPriceData, firstItemData;
+
+  if (filterItem) {
+    // Find customers who bought this item
+    const targetBuyers = new Set();
+    oi.forEach(r => { if (r.i === filterItem && r.e) targetBuyers.add(r.e); });
+
+    // Build per-customer data from ALL their orders
+    const custOrd = {};
+    oi.forEach(r => {
+      if (!targetBuyers.has(r.e)) return;
+      if (!custOrd[r.e]) custOrd[r.e] = [];
+      custOrd[r.e].push(r);
+    });
+
+    // Purchase count price
+    const cntPrice = {};
+    Object.entries(custOrd).forEach(([email, ords]) => {
+      const uniqueOrders = [...new Set(ords.map(o => o.n).filter(Boolean))].length || 1;
+      const bucket = uniqueOrders >= 10 ? '10+' : String(uniqueOrders);
+      const totalSpend = ords.reduce((s, o) => s + (o.p || 0), 0);
+      if (!cntPrice[bucket]) cntPrice[bucket] = { total: 0, count: 0 };
+      cntPrice[bucket].total += totalSpend;
+      cntPrice[bucket].count++;
+    });
+    countPriceData = Object.entries(cntPrice)
+      .sort((a, b) => (a[0] === '10+' ? 999 : Number(a[0])) - (b[0] === '10+' ? 999 : Number(b[0])))
+      .map(([cnt, v]) => ({ cnt, avgPrice: v.count > 0 ? Math.round(v.total / v.count) : 0, customers: v.count }));
+
+    // First item LTV (for this item's buyers, what was their first item)
+    const firstItem = {};
+    Object.entries(custOrd).forEach(([email, ords]) => {
+      const sorted = [...ords].sort((a, b) => String(a.d).localeCompare(String(b.d)));
+      const fi = sorted[0]?.i || '不明';
+      const totalSpend = sorted.reduce((s, o) => s + (o.p || 0), 0);
+      const uniqueOrders = [...new Set(sorted.map(o => o.n).filter(Boolean))].length || 1;
+      if (!firstItem[fi]) firstItem[fi] = { item: fi, totalLTV: 0, count: 0, repeatCount: 0 };
+      firstItem[fi].totalLTV += totalSpend;
+      firstItem[fi].count++;
+      if (uniqueOrders >= 2) firstItem[fi].repeatCount++;
+    });
+    firstItemData = Object.values(firstItem).map(r => ({
+      item: r.item, count: r.count,
+      avgLTV: r.count > 0 ? Math.round(r.totalLTV / r.count) : 0,
+      f2Rate: r.count > 0 ? Math.round(r.repeatCount / r.count * 1000) / 10 : 0,
+    })).sort((a, b) => b.avgLTV - a.avgLTV).slice(0, 30);
+  } else {
+    countPriceData = D.ltvAnalysis.purchaseCountPrice;
+    firstItemData = D.ltvAnalysis.firstItemLTV;
+  }
+
+  // Purchase count price table
+  buildTable('ltvCountPriceTable', [
+    { key: 'cnt', label: '購入回数', fmt: v => v + '回' },
+    { key: 'customers', label: '顧客数', fmt: v => comma(v) },
+    { key: 'avgPrice', label: '平均累計額', fmt: v => yen(v) },
+  ], countPriceData);
+
+  // First item LTV table
+  buildTable('ltvFirstItemTable', [
+    { key: 'item', label: '初回購入商品', fmt: v => safe(String(v).substring(0, 40)) },
+    { key: 'count', label: '顧客数', fmt: v => comma(v) },
+    { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+    { key: 'f2Rate', label: 'F2率', fmt: v => pct1(v) },
+  ], firstItemData, { limit: 30 });
+}
+
+function renderCoProducts() {
+  const sel = document.getElementById('basketProductSelect');
+  const selected = sel ? sel.value : '';
+  if (!selected) {
+    document.getElementById('coProductTableWrap').innerHTML = '<div class="no-data">商品を選択してください</div>';
+    return;
+  }
+  const coData = (D.basketAnalysis.coProductData || {})[selected] || [];
+  if (coData.length === 0) {
+    document.getElementById('coProductTableWrap').innerHTML = '<div class="no-data">同時購入データなし</div>';
+    return;
+  }
+  buildTable('coProductTableWrap', [
+    { key: 'item', label: '同時購入商品', fmt: v => safe(String(v).substring(0, 45)) },
+    { key: 'count', label: '同時購入回数', fmt: v => comma(v) },
+  ], coData, { limit: 20 });
+}
+
+// ── RFM分析 ──
+function renderRFMTab() {
+  if (!D.hasOrders || !D.orderItems || D.orderItems.length === 0) {
+    document.getElementById('rfmCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+
+  const now = new Date();
+  const oi = D.orderItems;
+
+  // 顧客ごとにR/F/M算出
+  const custData = {};
+  oi.forEach(r => {
+    if (!r.e) return;
+    if (!custData[r.e]) custData[r.e] = { orders: new Set(), totalSpend: 0, lastDate: '' };
+    if (r.n) custData[r.e].orders.add(r.n);
+    custData[r.e].totalSpend += (r.p || 0);
+    const d = String(r.d || '').replace(/\//g, '-').substring(0, 10);
+    if (d > custData[r.e].lastDate) custData[r.e].lastDate = d;
+  });
+
+  const customers = Object.entries(custData).map(([email, d]) => {
+    const lastD = d.lastDate ? new Date(d.lastDate + 'T00:00:00') : now;
+    const recencyDays = Math.max(0, Math.floor((now - lastD) / 86400000));
+    return { email, recency: recencyDays, frequency: d.orders.size || 1, monetary: d.totalSpend };
+  });
+
+  if (customers.length === 0) {
+    document.getElementById('rfmCards').innerHTML = '<div class="no-data">顧客データなし</div>';
+    return;
+  }
+
+  // 5段階スコアリング（均等分割）
+  function assignScore(arr, key, reverse) {
+    const sorted = [...arr].sort((a, b) => reverse ? b[key] - a[key] : a[key] - b[key]);
+    const n = sorted.length;
+    sorted.forEach((item, i) => {
+      item[key + 'Score'] = Math.min(5, Math.floor(i / n * 5) + 1);
+    });
+  }
+  assignScore(customers, 'recency', true);  // 最近ほど高スコア
+  assignScore(customers, 'frequency', false); // 頻度高いほど高スコア
+  assignScore(customers, 'monetary', false);  // 金額高いほど高スコア
+
+  // セグメント分類
+  function getSegment(r, f, m) {
+    const avg = (r + f + m) / 3;
+    if (r >= 4 && f >= 4 && m >= 4) return '優良顧客';
+    if (r >= 4 && f >= 3) return 'ロイヤル候補';
+    if (r >= 4 && f <= 2) return '新規顧客';
+    if (r <= 2 && f >= 3) return '離反リスク';
+    if (r <= 2 && f <= 2 && m >= 3) return '休眠（高額）';
+    if (r <= 2) return '離反・休眠';
+    if (avg >= 3.5) return '安定顧客';
+    return '育成対象';
+  }
+
+  customers.forEach(c => {
+    c.segment = getSegment(c.recencyScore, c.frequencyScore, c.monetaryScore);
+    c.rfmScore = c.recencyScore + c.frequencyScore + c.monetaryScore;
+  });
+
+  // カード
+  const segments = {};
+  customers.forEach(c => { segments[c.segment] = (segments[c.segment] || 0) + 1; });
+  const topSegment = Object.entries(segments).sort((a, b) => b[1] - a[1])[0];
+  const avgRFM = customers.reduce((s, c) => s + c.rfmScore, 0) / customers.length;
+
+  document.getElementById('rfmCards').innerHTML = [
+    { label: '分析対象顧客数', value: comma(customers.length) },
+    { label: '平均RFMスコア', value: avgRFM.toFixed(1) + ' / 15' },
+    { label: '優良顧客数', value: comma(segments['優良顧客'] || 0) },
+    { label: '離反リスク', value: comma((segments['離反リスク'] || 0) + (segments['離反・休眠'] || 0)) },
+    { label: '最多セグメント', value: topSegment ? topSegment[0] : '-' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  // セグメント分布テーブル
+  const segOrder = ['優良顧客', 'ロイヤル候補', '安定顧客', '新規顧客', '育成対象', '離反リスク', '休眠（高額）', '離反・休眠'];
+  const segColors = { '優良顧客': '#0d904f', 'ロイヤル候補': '#1a73e8', '安定顧客': '#5b9bd5', '新規顧客': '#34a853', '育成対象': '#f9ab00', '離反リスク': '#e53935', '休眠（高額）': '#ff6d00', '離反・休眠': '#999' };
+  const segRows = segOrder.filter(s => segments[s]).map(s => {
+    const custs = customers.filter(c => c.segment === s);
+    const avgM = custs.reduce((sum, c) => sum + c.monetary, 0) / custs.length;
+    const avgF = custs.reduce((sum, c) => sum + c.frequency, 0) / custs.length;
+    const avgR = custs.reduce((sum, c) => sum + c.recency, 0) / custs.length;
+    return { segment: s, count: custs.length, pct: (custs.length / customers.length * 100), avgMonetary: Math.round(avgM), avgFrequency: avgF, avgRecency: Math.round(avgR) };
+  });
+
+  buildTable('rfmSegmentTable', [
+    { key: 'segment', label: 'セグメント', fmt: (v) => '<span style="color:' + (segColors[v] || '#333') + ';font-weight:600">' + v + '</span>' },
+    { key: 'count', label: '顧客数', fmt: v => comma(v) },
+    { key: 'pct', label: '構成比', fmt: v => v.toFixed(1) + '%' },
+    { key: 'avgRecency', label: '平均R(日)', fmt: v => comma(v) },
+    { key: 'avgFrequency', label: '平均F(回)', fmt: v => v.toFixed(1) },
+    { key: 'avgMonetary', label: '平均M(円)', fmt: v => yen(v) },
+  ], segRows);
+
+  // RFMセグメント分布 円グラフ
+  destroyChart('chartRfmHeatmap');
+  const segChartData = segRows.map(r => ({ label: r.segment, value: r.count }));
+  chartInstances['chartRfmHeatmap'] = new Chart(document.getElementById('chartRfmHeatmap'), {
+    type: 'doughnut',
+    data: {
+      labels: segChartData.map(r => r.label),
+      datasets: [{ data: segChartData.map(r => r.value), backgroundColor: segChartData.map(r => segColors[r.label] || '#999') }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx => ctx.label + ': ' + comma(ctx.raw) + '人 (' + (customers.length > 0 ? (ctx.raw / customers.length * 100).toFixed(1) : 0) + '%)' } }
+      }
+    }
+  });
+
+  // セグメントフィルタ
+  const rfmSel = document.getElementById('rfmSegmentFilter');
+  if (rfmSel.options.length <= 1) {
+    segOrder.filter(s => segments[s]).forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s + ' (' + segments[s] + ')';
+      rfmSel.appendChild(opt);
+    });
+  }
+
+  // セグメント別 購入商品比率
+  const filterSeg = rfmSel.value;
+  const segCustomerEmails = new Set();
+  customers.forEach(c => {
+    if (!filterSeg || c.segment === filterSeg) segCustomerEmails.add(c.email);
+  });
+
+  // セグメント内の商品別集計
+  const segProductAgg = {};
+  let segTotalAmount = 0;
+  D.orderItems.forEach(r => {
+    if (!segCustomerEmails.has(r.e)) return;
+    const item = r.i || '不明';
+    if (!segProductAgg[item]) segProductAgg[item] = { item, count: 0, amount: 0 };
+    segProductAgg[item].count += 1;
+    segProductAgg[item].amount += (r.p || 0);
+    segTotalAmount += (r.p || 0);
+  });
+
+  const segProductRows = Object.values(segProductAgg).sort((a, b) => b.amount - a.amount).slice(0, 30);
+  const segProductLabel = filterSeg || '全セグメント';
+
+  buildTable('rfmProductTable', [
+    { key: 'item', label: '商品', fmt: v => { const name = D.masterProducts[v] || v; return '<span title="' + safe(v) + '">' + safe(name.substring(0, 30)) + '</span>'; } },
+    { key: 'count', label: '購入回数', fmt: v => comma(v) },
+    { key: 'amount', label: '売上', fmt: v => yen(v) },
+    { key: 'pct', label: '売上構成比', fmt: v => v.toFixed(1) + '%' },
+  ], segProductRows.map(r => ({ ...r, pct: segTotalAmount > 0 ? (r.amount / segTotalAmount * 100) : 0 })));
+
+  // セグメント別商品円グラフ
+  destroyChart('chartSegmentProduct');
+  const topN = segProductRows.slice(0, 8);
+  const othersAmount = segTotalAmount - topN.reduce((s, r) => s + r.amount, 0);
+  const pieLabels = topN.map(r => (D.masterProducts[r.item] || r.item).substring(0, 15));
+  const pieData = topN.map(r => r.amount);
+  if (othersAmount > 0) { pieLabels.push('その他'); pieData.push(othersAmount); }
+  const pieColors = ['#4285f4','#ea4335','#fbbc04','#34a853','#ff6d01','#46bdc6','#7b1fa2','#c2185b','#999'];
+
+  chartInstances['chartSegmentProduct'] = new Chart(document.getElementById('chartSegmentProduct'), {
+    type: 'doughnut',
+    data: { labels: pieLabels, datasets: [{ data: pieData, backgroundColor: pieColors }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        title: { display: true, text: segProductLabel + ' - 商品別売上構成' },
+        tooltip: { callbacks: { label: ctx => ctx.label + ': ' + yen(ctx.raw) + ' (' + (ctx.raw / segTotalAmount * 100).toFixed(1) + '%)' } }
+      }
+    }
+  });
+}
+
+// ── エントランス分析 ──
+function renderEntranceTab() {
+  if (!D.hasOrders || !D.orderItems) {
+    document.getElementById('entranceCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+  const oi = D.orderItems;
+
+  // 顧客ごと注文をソート
+  const custOrders = {};
+  oi.forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+  Object.values(custOrders).forEach(arr => arr.sort((a, b) => String(a.d).localeCompare(String(b.d))));
+
+  // 入口商品別集計
+  const entranceMap = {};
+  Object.entries(custOrders).forEach(([email, orders]) => {
+    const firstItem = orders[0].i || '不明';
+    const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+    const totalSpend = orders.reduce((s, o) => s + (o.p || 0), 0);
+    const isRepeat = orderNums.length >= 2;
+    if (!entranceMap[firstItem]) entranceMap[firstItem] = { item: firstItem, count: 0, repeatCount: 0, totalLTV: 0 };
+    entranceMap[firstItem].count++;
+    if (isRepeat) entranceMap[firstItem].repeatCount++;
+    entranceMap[firstItem].totalLTV += totalSpend;
+  });
+
+  const entranceRows = Object.values(entranceMap)
+    .map(r => ({ ...r, f2Rate: r.count > 0 ? (r.repeatCount / r.count * 100) : 0, avgLTV: r.count > 0 ? Math.round(r.totalLTV / r.count) : 0 }))
+    .sort((a, b) => b.count - a.count);
+
+  const totalEntrance = entranceRows.reduce((s, r) => s + r.count, 0);
+  const totalF2 = entranceRows.reduce((s, r) => s + r.repeatCount, 0);
+  const overallF2Rate = totalEntrance > 0 ? (totalF2 / totalEntrance * 100) : 0;
+  const bestF2Item = [...entranceRows].filter(r => r.count >= 3).sort((a, b) => b.f2Rate - a.f2Rate)[0];
+
+  document.getElementById('entranceCards').innerHTML = [
+    { label: '入口商品種類', value: comma(entranceRows.length) },
+    { label: '全体F2転換率', value: overallF2Rate.toFixed(1) + '%' },
+    { label: 'F2最高商品', value: bestF2Item ? safe(String(bestF2Item.item).substring(0, 20)) : '-' },
+    { label: 'F2最高率', value: bestF2Item ? bestF2Item.f2Rate.toFixed(1) + '%' : '-' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  buildTable('entranceItemTable', [
+    { key: 'item', label: '入口商品', fmt: v => safe(String(v).substring(0, 35)) },
+    { key: 'count', label: '初回購入者数', fmt: v => comma(v) },
+    { key: 'repeatCount', label: 'F2転換数', fmt: v => comma(v) },
+    { key: 'f2Rate', label: 'F2転換率', fmt: v => '<span class="badge ' + (v >= 20 ? 'badge-success' : v >= 10 ? 'badge-neutral' : 'badge-danger') + '">' + v.toFixed(1) + '%</span>' },
+    { key: 'avgLTV', label: '平均LTV', fmt: v => yen(v) },
+  ], entranceRows, { limit: 30 });
+
+  // チャート
+  const top10 = entranceRows.filter(r => r.count >= 2).slice(0, 10);
+  destroyChart('chartEntranceF2');
+  if (top10.length > 0) {
+    chartInstances['chartEntranceF2'] = new Chart(document.getElementById('chartEntranceF2'), {
+      type: 'bar', data: {
+        labels: top10.map(r => String(r.item).substring(0, 15)),
+        datasets: [{ label: 'F2転換率', data: top10.map(r => r.f2Rate), backgroundColor: '#1a73e8' }]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.raw.toFixed(1) + '%' } } }, scales: { x: { beginAtZero: true, max: 100, ticks: { callback: v => v + '%' } } } }
+    });
+  }
+  destroyChart('chartEntranceLTV');
+  if (top10.length > 0) {
+    chartInstances['chartEntranceLTV'] = new Chart(document.getElementById('chartEntranceLTV'), {
+      type: 'bar', data: {
+        labels: top10.map(r => String(r.item).substring(0, 15)),
+        datasets: [{ label: '平均LTV', data: top10.map(r => r.avgLTV), backgroundColor: '#0d904f' }]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => yen(ctx.raw) } } }, scales: { x: { beginAtZero: true, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } } } }
+    });
+  }
+
+  // 入口商品フィルタ
+  const eSel = document.getElementById('entranceItemFilter');
+  if (eSel.options.length <= 1) {
+    entranceRows.filter(r => r.count >= 2).forEach(r => {
+      const opt = document.createElement('option');
+      opt.value = r.item; opt.textContent = String(r.item).substring(0, 40) + ' (' + r.count + ')';
+      eSel.appendChild(opt);
+    });
+  }
+
+  // 2回目購入商品
+  const selItem = eSel.value;
+  if (selItem) {
+    const buyersOfItem = Object.entries(custOrders).filter(([_, orders]) => orders[0].i === selItem);
+    const secondMap = {};
+    buyersOfItem.forEach(([_, orders]) => {
+      const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+      if (orderNums.length < 2) return;
+      const secondOrderNum = orderNums[1];
+      const secondItems = orders.filter(o => o.n === secondOrderNum);
+      secondItems.forEach(o => {
+        const item = o.i || '不明';
+        if (!secondMap[item]) secondMap[item] = { item, count: 0 };
+        secondMap[item].count++;
+      });
+    });
+    const secondRows = Object.values(secondMap).sort((a, b) => b.count - a.count);
+    buildTable('entrance2ndTable', [
+      { key: 'item', label: '2回目購入商品', fmt: v => safe(String(v).substring(0, 40)) },
+      { key: 'count', label: '件数', fmt: v => comma(v) },
+    ], secondRows, { limit: 20 });
+  } else {
+    document.getElementById('entrance2ndTable').innerHTML = '<div class="no-data">入口商品を選択してください</div>';
+  }
+}
+
+// ── アプローチタイミング分析 ──
+function renderTimingTab() {
+  if (!D.hasOrders || !D.orderItems) {
+    document.getElementById('timingCards').innerHTML = '<div class="no-data">受注データなし</div>';
+    return;
+  }
+  const oi = D.orderItems;
+
+  // 顧客ごと注文
+  const custOrders = {};
+  oi.forEach(r => {
+    if (!r.e || !r.d) return;
+    if (!custOrders[r.e]) custOrders[r.e] = [];
+    custOrders[r.e].push(r);
+  });
+
+  // F2経過日数
+  const f2Days = [];
+  Object.values(custOrders).forEach(orders => {
+    orders.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+    const orderNums = [...new Set(orders.map(o => o.n).filter(Boolean))];
+    if (orderNums.length < 2) return;
+    const firstDate = orders.find(o => o.n === orderNums[0])?.d;
+    const secondDate = orders.find(o => o.n === orderNums[1])?.d;
+    if (!firstDate || !secondDate) return;
+    const d1 = new Date(String(firstDate).replace(/\//g, '-').substring(0, 10) + 'T00:00:00');
+    const d2 = new Date(String(secondDate).replace(/\//g, '-').substring(0, 10) + 'T00:00:00');
+    const days = Math.floor((d2 - d1) / 86400000);
+    if (days >= 0 && days <= 365) f2Days.push(days);
+  });
+
+  // 曜日別注文数
+  const dowNames = ['日', '月', '火', '水', '木', '金', '土'];
+  const dowCounts = [0, 0, 0, 0, 0, 0, 0];
+  const monthlyOrders = {};
+  oi.forEach(r => {
+    const d = String(r.d || '').replace(/\//g, '-').substring(0, 10);
+    if (!d || d.length < 10) return;
+    const dt = new Date(d + 'T00:00:00');
+    if (!isNaN(dt.getTime())) dowCounts[dt.getDay()]++;
+    const ym = d.substring(0, 7);
+    monthlyOrders[ym] = (monthlyOrders[ym] || 0) + 1;
+  });
+
+  // F2経過日数の統計
+  const avgF2 = f2Days.length > 0 ? Math.round(f2Days.reduce((s, v) => s + v, 0) / f2Days.length) : 0;
+  const medianF2 = f2Days.length > 0 ? f2Days.sort((a, b) => a - b)[Math.floor(f2Days.length / 2)] : 0;
+  const peakDow = dowCounts.indexOf(Math.max(...dowCounts));
+
+  document.getElementById('timingCards').innerHTML = [
+    { label: 'F2平均経過日数', value: avgF2 + '日' },
+    { label: 'F2中央値', value: medianF2 + '日' },
+    { label: 'F2対象者数', value: comma(f2Days.length) },
+    { label: '注文最多曜日', value: dowNames[peakDow] + '曜日' },
+  ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div></div>').join('');
+
+  // F2経過日数分布チャート
+  destroyChart('chartF2Days');
+  if (f2Days.length > 0) {
+    const buckets = {};
+    f2Days.forEach(d => {
+      let label;
+      if (d <= 7) label = '1週間以内';
+      else if (d <= 14) label = '2週間以内';
+      else if (d <= 30) label = '1ヶ月以内';
+      else if (d <= 60) label = '2ヶ月以内';
+      else if (d <= 90) label = '3ヶ月以内';
+      else if (d <= 180) label = '半年以内';
+      else label = '半年超';
+      buckets[label] = (buckets[label] || 0) + 1;
+    });
+    const bucketOrder = ['1週間以内', '2週間以内', '1ヶ月以内', '2ヶ月以内', '3ヶ月以内', '半年以内', '半年超'];
+    const bucketLabels = bucketOrder.filter(b => buckets[b]);
+    chartInstances['chartF2Days'] = new Chart(document.getElementById('chartF2Days'), {
+      type: 'bar', data: {
+        labels: bucketLabels,
+        datasets: [{ label: '人数', data: bucketLabels.map(b => buckets[b] || 0), backgroundColor: '#1a73e8' }]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => comma(ctx.raw) + '人' } } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+
+  // 曜日別チャート
+  destroyChart('chartDayOfWeek');
+  chartInstances['chartDayOfWeek'] = new Chart(document.getElementById('chartDayOfWeek'), {
+    type: 'bar', data: {
+      labels: dowNames,
+      datasets: [{ label: '注文数', data: dowCounts, backgroundColor: dowCounts.map((_, i) => i === peakDow ? '#e53935' : '#5b9bd5') }]
+    }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  // 月別注文数
+  destroyChart('chartMonthlyOrders');
+  const moSorted = Object.entries(monthlyOrders).sort((a, b) => a[0].localeCompare(b[0]));
+  if (moSorted.length > 0) {
+    chartInstances['chartMonthlyOrders'] = new Chart(document.getElementById('chartMonthlyOrders'), {
+      type: 'line', data: {
+        labels: moSorted.map(([ym]) => D.monthLabels[ym] || ym),
+        datasets: [{ label: '注文数', data: moSorted.map(([_, v]) => v), borderColor: '#1a3a5c', backgroundColor: 'rgba(26,58,92,0.08)', fill: true, tension: 0.3, pointRadius: 3 }]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+}
+
+// ── Render all ──
+function renderAll() {
+  renderSalesTab();
+  renderProductTab();
+  renderAdsTab();
+  renderAcqTab();
+  renderRepeatTab();
+  renderBasketTab();
+  renderLTVTab();
+  renderRFMTab();
+  renderEntranceTab();
+  renderTimingTab();
+}
+
+// ── Event handlers ──
+
+// Main tabs
+function updateFilterUI(tabId) {
+  const noFilterTabs = ['tab-customer'];
+  const noCompareTabs = ['tab-product'];
+  const mf = document.getElementById('monthFilter');
+  const filterBar = document.querySelector('.filter-bar');
+  const compareGroup = filterBar.querySelectorAll('.filter-group')[1];
+  if (noFilterTabs.includes(tabId)) {
+    filterBar.style.display = 'none';
+  } else {
+    filterBar.style.display = '';
+    if (compareGroup) compareGroup.style.display = noCompareTabs.includes(tabId) ? 'none' : '';
+    mf.style.display = '';
+  }
+}
+document.querySelectorAll('.main-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    this.classList.add('active');
+    const target = document.getElementById(this.dataset.tab);
+    if (target) target.classList.add('active');
+    updateFilterUI(this.dataset.tab);
+    // 商品別分析タブはデフォルト当月
+    if (this.dataset.tab === 'tab-product') {
+      const mf = document.getElementById('monthFilter');
+      const now = new Date();
+      const curYm = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+      if ([...mf.options].some(o => o.value === curYm)) mf.value = curYm;
+      renderProductTab();
+    }
+    // CRM・広告タブ切替時に再描画
+    if (this.dataset.tab === 'tab-acq') renderAcqTab();
+    if (this.dataset.tab === 'tab-ads') renderAdsTab();
+  });
+});
+
+// Sub tabs
+document.querySelectorAll('.sub-tabs').forEach(tabGroup => {
+  tabGroup.querySelectorAll('.sub-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+      const parentTabs = this.closest('.sub-tabs');
+      // Deactivate sibling tabs
+      parentTabs.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      // Find the container that holds sibling panels (parent of the sub-tabs)
+      const container = parentTabs.parentElement;
+      // Only toggle panels that are direct children of the same container
+      Array.from(container.children).forEach(el => {
+        if (el.classList.contains('sub-panel')) el.classList.remove('active');
+      });
+      const target = document.getElementById(this.dataset.subtab);
+      if (target) target.classList.add('active');
+    });
+  });
+});
+
+// Default to latest month
+if (D.months.length > 0) {
+  currentMonth = D.months[D.months.length - 1];
+  monthSelect.value = currentMonth;
+}
+
+// Month filter
+monthSelect.addEventListener('change', function() {
+  currentMonth = this.value;
+  renderAll();
+});
+
+// Compare toggle
+document.querySelectorAll('.compare-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.compare-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    compareMode = this.dataset.compare;
+    renderAll();
+  });
+});
+
+// Product metric selector
+document.getElementById('productMetricSelect').addEventListener('change', renderProductMonthlyTable);
+
+// Repeat product filter
+document.getElementById('repeatProductFilter').addEventListener('change', renderRepeatTab);
+
+// LTV product filter
+document.getElementById('ltvProductFilter').addEventListener('change', renderLTVTab);
+
+// Basket product selector
+document.getElementById('basketProductSelect').addEventListener('change', renderCoProducts);
+
+// RFM segment filter
+document.getElementById('rfmSegmentFilter').addEventListener('change', renderRFMTab);
+
+// Entrance item filter
+document.getElementById('entranceItemFilter').addEventListener('change', renderEntranceTab);
+
+// Initial render
+renderAll();
+</script>
+</body>
+</html>
