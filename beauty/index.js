@@ -4348,9 +4348,8 @@ async function generateDashboardHtml() {
     if (!ym) return;
     const device = (r[mailDeviceKey] || '').trim();
     const category = (r[mailCategoryKey] || '').trim();
-    // 全体行のみ集計（デバイス=全体, 区分=自店舗）
-    if (device !== '全体' && device !== '') return;
-    if (category && category !== '自店舗') return;
+    // デバイス=全体のみ集計
+    if (device !== '全体') return;
     const mailType = (r[mailTypeKey] || '').trim();
     if (!mailByYM[ym]) mailByYM[ym] = { sentCount: 0, sent: 0, opened: 0, clicks: 0, sales: 0, conversions: 0, types: [] };
     mailByYM[ym].sentCount += num(r[mailSentCountKey]);
@@ -6184,25 +6183,19 @@ function renderAcqTab() {
   const mailTotalSales = sumField(mailData, 'sales');
   const mailTotalOrders = sumField(mailData, 'orders');
   document.getElementById('mailKpiRow').innerHTML = [
-    { label: '配信数', value: comma(mailTotalSent) },
-    { label: '開封数', value: comma(mailTotalOpened) },
-    { label: '開封率', value: mailTotalSent > 0 ? pct1(mailTotalOpened / mailTotalSent * 100) : '-' },
     { label: 'クリック数', value: comma(mailTotalClicks) },
-    { label: '売上', value: yen(mailTotalSales) },
     { label: '転換数', value: comma(mailTotalOrders) },
     { label: '転換率', value: mailTotalSent > 0 ? (mailTotalOrders / mailTotalSent * 100).toFixed(2) + '%' : '-' },
+    { label: '売上', value: yen(mailTotalSales) },
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
   const mailSorted = [...mailData].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   buildTable('mailTableWrap', [
     { key: 'date', label: '年月', fmt: v => { const ym = String(v); return D.monthLabels[ym] || ym; } },
-    { key: 'sent', label: '配信数', fmt: v => comma(v) },
-    { key: 'opened', label: '開封数', fmt: v => comma(v) },
-    { key: 'openRate', label: '開封率', fmt: v => safe(v) },
-    { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
-    { key: 'sales', label: '売上', fmt: v => yen(v) },
+    { key: 'clicks', label: 'クリック数', fmt: v => comma(v) },
     { key: 'orders', label: '転換数', fmt: v => comma(v) },
     { key: 'convRate', label: '転換率', fmt: v => safe(v) },
+    { key: 'sales', label: '売上', fmt: v => yen(v) },
   ], mailSorted, { limit: 50 });
 }
 
