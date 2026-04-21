@@ -5013,24 +5013,33 @@ function renderAdsTab() {
     makeRow('KW別', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal) +
     '</tbody></table></div>';
 
-  // RPP daily chart
+  // RPP daily chart - 商品別/KW別費用の積み上げ + 売上ライン
   destroyChart('chartRppDaily');
+  // 日別で商品別費用を集計（rpp_item_raw）、KW別 = 全体 - 商品別
+  const itemSpendByDate = {};
+  rppItemData.forEach(r => { if (r.date) itemSpendByDate[r.date] = (itemSpendByDate[r.date] || 0) + (r.spend || 0); });
   const rppSorted = [...rppData].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   if (rppSorted.length > 0) {
     const rLabels = rppSorted.map(r => { const p = r.date.split(/[\\/\\-]/); return p.length >= 3 ? p[1]+'/'+p[2] : r.date; });
+    const itemSpendArr = rppSorted.map(r => itemSpendByDate[r.date] || 0);
+    const kwSpendArr = rppSorted.map((r, i) => Math.max(0, (r.spend || 0) - itemSpendArr[i]));
     chartInstances['chartRppDaily'] = new Chart(document.getElementById('chartRppDaily'), {
       type: 'bar',
       data: {
         labels: rLabels,
         datasets: [
-          { label: '費用', data: rppSorted.map(r => r.spend), backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 1 },
+          { label: '商品別費用', data: itemSpendArr, backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
+          { label: 'KW別費用', data: kwSpendArr, backgroundColor: 'rgba(232,113,10,0.5)', yAxisID: 'y', order: 2, stack: 'spend' },
           { label: '売上', data: rppSorted.map(r => r.sales), type: 'line', borderColor: '#0d904f', yAxisID: 'y', tension: 0.3, pointRadius: 1, order: 0 },
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + yen(ctx.raw) } } },
-        scales: { y: { ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } } }
+        scales: {
+          x: { stacked: true },
+          y: { stacked: false, ticks: { callback: v => v >= 10000 ? (v/10000).toFixed(0) + '万' : comma(v) } }
+        }
       }
     });
   }
