@@ -5278,15 +5278,12 @@ function renderSalesTab() {
       if (sf.date <= today && actual !== null) { actualShareSum += sf.share; actualSalesSum += actual; actualDays++; }
     });
     const landingForecast = actualShareSum > 0 ? Math.round(actualSalesSum / actualShareSum * totalShare) : 0;
-    const momYm = getCompareMonth(currentMonth, 'mom');
-    const yoyYm = getCompareMonth(currentMonth, 'yoy');
-    const momSales = momYm ? sumField(getMonthData(D.allByMonth, momYm), 'sales') : null;
-    const yoySales = yoyYm ? sumField(getMonthData(D.allByMonth, yoyYm), 'sales') : null;
-    const momChange = momSales ? calcChange(landingForecast, momSales) : null;
-    const yoyChange = yoySales ? calcChange(landingForecast, yoySales) : null;
+    const fcCmpYm = getCompareMonth(currentMonth, compareMode);
+    const fcCmpSales = fcCmpYm ? sumField(getMonthData(D.allByMonth, fcCmpYm), 'sales') : null;
+    const fcChange = fcCmpSales ? calcChange(landingForecast, fcCmpSales) : null;
+    const fcLabel = compareMode === 'yoy' ? '前年比' : '前月比';
     let forecastSub = '';
-    if (momChange !== null) forecastSub += '前月比 ' + (momChange > 0 ? '+' : '') + momChange.toFixed(1) + '%';
-    if (yoyChange !== null) forecastSub += (forecastSub ? '　' : '') + '前年比 ' + (yoyChange > 0 ? '+' : '') + yoyChange.toFixed(1) + '%';
+    if (fcChange !== null) forecastSub = fcLabel + ' ' + (fcChange > 0 ? '+' : '') + fcChange.toFixed(1) + '%';
     cards.unshift({ label: '着地予測', value: yen(landingForecast), sub: forecastSub || undefined });
   }
 
