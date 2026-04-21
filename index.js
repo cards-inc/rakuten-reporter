@@ -2211,6 +2211,31 @@ functions.http('fetchRppReport', async (req, res) => {
 
     } // end if (!skipExtra)
 
+    // ── event_calendar 自動更新 ──
+    try {
+      const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+      const sheetsClient = google.sheets({ version: 'v4', auth: await auth.getClient() });
+      let existingEvents = [];
+      try {
+        const evtSheet = await sheetsClient.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'event_calendar!A2:D5000' });
+        existingEvents = (evtSheet.data.values || []).map(r => ({ id: r[0] || '', title: r[1] || '', startDate: r[2] || '', endDate: r[3] || '' }));
+      } catch (e2) { console.log('event_calendar read:', e2.message); }
+      const freshEvents = await fetchRakutenEvents();
+      const seen = new Set();
+      const merged = [];
+      [...existingEvents, ...freshEvents].forEach(e => { const key = e.id ? String(e.id) : (e.title + '|' + e.startDate); if (seen.has(key)) return; seen.add(key); merged.push(e); });
+      merged.sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
+      const evtHeaders = ['イベントID', 'イベント名', '開始日', '終了日'];
+      const evtValues = [evtHeaders, ...merged.map(e => [e.id || '', e.title || '', (e.startDate || '').substring(0, 10), (e.endDate || '').substring(0, 10)])];
+      await sheetsClient.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: 'event_calendar!A:D' });
+      await sheetsClient.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: 'event_calendar!A1', valueInputOption: 'RAW', requestBody: { values: evtValues } });
+      console.log(`event_calendar updated: ${merged.length} events`);
+      additionalResults.push({ sheet: 'event_calendar', status: 'ok', events: merged.length });
+    } catch (e) {
+      console.log(`event_calendar update error: ${e.message}`);
+      additionalResults.push({ sheet: 'event_calendar', status: 'error', message: e.message });
+    }
+
     const message = `レポート取得完了。全レポート: ${JSON.stringify(additionalResults)}`;
     console.log(message);
     if (res) res.status(200).send(message);
@@ -4877,8 +4902,8 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       <div class="section-box">
         <div class="section-title">RFMセグメント分布</div>
         <div class="grid-2">
-          <div class="chart-wrap" style="height:350px"><canvas id="chartRfmHeatmap"></canvas></div>
           <div id="rfmSegmentTable"></div>
+          <div class="chart-wrap" style="height:300px"><canvas id="chartRfmHeatmap"></canvas></div>
         </div>
       </div>
       <div class="section-box">
@@ -4889,8 +4914,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
             <option value="">全セグメント</option>
           </select>
         </div>
-        <div id="rfmProductTable"></div>
-        <div class="chart-wrap chart-md" style="margin-top:16px"><canvas id="chartSegmentProduct"></canvas></div>
+        <div class="grid-2">
+          <div id="rfmProductTable"></div>
+          <div class="chart-wrap" style="height:300px"><canvas id="chartSegmentProduct"></canvas></div>
+        </div>
       </div>
     </div>
     <div class="sub-panel" id="cust-entrance">
@@ -6532,20 +6559,21 @@ function renderRFMTab() {
     { key: 'avgMonetary', label: '平均M(円)', fmt: v => yen(v) },
   ], segRows);
 
-  // RFスコアヒートマップ（棒チャートで代用）
+  // RFMセグメント分布 円グラフ
   destroyChart('chartRfmHeatmap');
   const segChartData = segRows.map(r => ({ label: r.segment, value: r.count }));
   chartInstances['chartRfmHeatmap'] = new Chart(document.getElementById('chartRfmHeatmap'), {
-    type: 'bar',
+    type: 'doughnut',
     data: {
       labels: segChartData.map(r => r.label),
-      datasets: [{ label: '顧客数', data: segChartData.map(r => r.value), backgroundColor: segChartData.map(r => segColors[r.label] || '#999') }]
+      datasets: [{ data: segChartData.map(r => r.value), backgroundColor: segChartData.map(r => segColors[r.label] || '#999') }]
     },
     options: {
-      indexAxis: 'y',
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => comma(ctx.raw) + '人' } } },
-      scales: { x: { beginAtZero: true } }
+      plugins: {
+        legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx => ctx.label + ': ' + comma(ctx.raw) + '人 (' + (customers.length > 0 ? (ctx.raw / customers.length * 100).toFixed(1) : 0) + '%)' } }
+      }
     }
   });
 
