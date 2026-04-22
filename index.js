@@ -5571,15 +5571,31 @@ function renderSalesTab() {
     const rppDaySales = dailyDates.map(d => dailyMap[d].rpp);
     const nonRppDaySales = dailyDates.map(d => Math.max(0, dailyMap[d].total - dailyMap[d].rpp));
 
-    // イベントアノテーション生成（主要イベントのみ: マラソン/スーパーSALE/ワンダフルデー）
+    // イベントアノテーション生成
     const eventAnnotations = {};
-    const evtColorMap = { 'マラソン': 'rgba(255,87,34,0.13)', 'スーパーSALE': 'rgba(234,67,53,0.15)', 'ワンダフルデー': 'rgba(76,175,80,0.12)' };
+    const evtColorMap = {
+      'マラソン': 'rgba(255,87,34,0.13)',
+      'スーパーSALE': 'rgba(234,67,53,0.15)',
+      'ワンダフルデー': 'rgba(76,175,80,0.12)',
+      '0と5のつく日': 'rgba(33,150,243,0.10)',
+      'いちばの日': 'rgba(156,39,176,0.12)',
+    };
     const majorEvents = (D.rakutenEvents || []).filter(evt => {
       const t = evt.title || '';
-      return t.includes('マラソン') || t.includes('スーパーSALE') || t.includes('ワンダフルデー');
+      return t.includes('マラソン') || t.includes('スーパーSALE') || t.includes('ワンダフルデー') || t.includes('0と5のつく日') || t.includes('いちばの日');
+    });
+    const dedupEvents = [];
+    const evtSeen = new Set();
+    majorEvents.forEach(evt => {
+      const t = evt.title || '';
+      const cat = t.includes('スーパーSALE') ? 'SS' : t.includes('マラソン') ? 'マラソン' : t.includes('ワンダフルデー') ? 'WD' : t.includes('いちばの日') ? '18日' : '5の日';
+      const key = cat + '|' + (evt.startDate || '');
+      if (evtSeen.has(key)) return;
+      evtSeen.add(key);
+      dedupEvents.push({ ...evt, cat });
     });
     let evtIdx = 0;
-    majorEvents.forEach(evt => {
+    dedupEvents.forEach(evt => {
       const eStart = evt.startDate ? evt.startDate.replace(/\\//g, '-').substring(0, 10) : '';
       const eEnd = evt.endDate ? evt.endDate.replace(/\\//g, '-').substring(0, 10) : '';
       if (!eStart) return;
@@ -5587,12 +5603,13 @@ function renderSalesTab() {
       const eiEnd = eEnd ? dailyDates.findIndex(d => d > eEnd) : si + 1;
       if (si < 0) return;
       const t = evt.title || '';
-      const color = t.includes('スーパーSALE') ? evtColorMap['スーパーSALE'] : t.includes('マラソン') ? evtColorMap['マラソン'] : evtColorMap['ワンダフルデー'];
-      const shortName = t.includes('スーパーSALE') ? 'SS' : t.includes('マラソン') ? 'マラソン' : 'WD';
+      const color = t.includes('スーパーSALE') ? evtColorMap['スーパーSALE'] : t.includes('マラソン') ? evtColorMap['マラソン'] : t.includes('ワンダフルデー') ? evtColorMap['ワンダフルデー'] : t.includes('いちばの日') ? evtColorMap['いちばの日'] : evtColorMap['0と5のつく日'];
+      const shortName = evt.cat;
+      const labelColor = (evt.cat === '5の日' || evt.cat === '18日') ? '#1565c0' : '#c62828';
       eventAnnotations['evt' + evtIdx++] = {
         type: 'box', xMin: si - 0.5, xMax: (eiEnd < 0 ? dailyDates.length : eiEnd) - 0.5,
         backgroundColor: color, borderWidth: 0,
-        label: { display: true, content: shortName, position: 'start', font: { size: 9, weight: 'bold' }, color: '#c62828' }
+        label: { display: true, content: shortName, position: 'start', font: { size: 9, weight: 'bold' }, color: labelColor }
       };
     });
 
