@@ -327,8 +327,7 @@ functions.http('fetchRppReport', async (req, res) => {
       });
       console.log('キーワード別ラジオ:', kwRadioClicked);
       await new Promise(r => setTimeout(r, 1000));
-      // 日別で取得（月別だと1商品1KWに集約されるため）
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodDay'); if (r) r.click(); });
+      await page.evaluate(() => { const r = document.querySelector('#rdPeriodMonth'); if (r) r.click(); });
       await new Promise(r => setTimeout(r, 2000));
       await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
       await clickButton(page, '全キーワードレポートダウンロード');
