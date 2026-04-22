@@ -2435,6 +2435,9 @@ functions.http('fetchRppReport', async (req, res) => {
       additionalResults.push({ sheet: 'event_calendar', status: 'error', message: e.message });
     }
 
+    // ダッシュボード自動デプロイ
+    try { await deployDashboardToGithub(); } catch (e) { console.log(`ダッシュボード自動デプロイエラー: ${e.message}`); }
+
     const message = `レポート取得完了。全レポート: ${JSON.stringify(additionalResults)}`;
     console.log(message);
     if (res) res.status(200).send(message);
@@ -3840,6 +3843,76 @@ async function fetchOrdersFromRmsApi(query) {
     newRows: newRows.length,
     existingRows: existingOrderNumbers.size,
   };
+}
+
+// ============================
+// ダッシュボード自動デプロイ（GitHub Pages）
+// ============================
+const GITHUB_REPO = 'cards-inc/rakuten-reporter';
+const GITHUB_PAGES_PATH = 'docs/nagara-shop/index.html';
+
+async function deployDashboardToGithub() {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) { console.log('GITHUB_TOKEN未設定: ダッシュボード自動デプロイをスキップ'); return; }
+
+  console.log('ダッシュボード自動デプロイ開始...');
+  const html = await generateDashboardHtml();
+  const https = require('https');
+
+  function ghApi(method, apiPath, body) {
+    return new Promise((resolve, reject) => {
+      const opts = {
+        hostname: 'api.github.com',
+        path: apiPath,
+        method,
+        headers: { 'Authorization': `token ${token}`, 'User-Agent': 'rakuten-reporter', 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+      };
+      const req = https.request(opts, res => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => { try { resolve({ status: res.statusCode, data: JSON.parse(data) }); } catch { resolve({ status: res.statusCode, data }); } });
+      });
+      req.on('error', reject);
+      if (body) req.write(JSON.stringify(body));
+      req.end();
+    });
+  }
+
+  // 1. 現在のファイルSHAを取得
+  const getRes = await ghApi('GET', `/repos/${GITHUB_REPO}/contents/${GITHUB_PAGES_PATH}?ref=main`);
+  const currentSha = getRes.data?.sha || '';
+
+  // 2. Blob API でラージファイル対応
+  const blobRes = await ghApi('POST', `/repos/${GITHUB_REPO}/git/blobs`, { content: Buffer.from(html, 'utf-8').toString('base64'), encoding: 'base64' });
+  if (blobRes.status !== 201) { console.log('blob作成失敗:', blobRes.status, JSON.stringify(blobRes.data).substring(0, 200)); return; }
+  const blobSha = blobRes.data.sha;
+
+  // 3. mainブランチの最新commitとtreeを取得
+  const refRes = await ghApi('GET', `/repos/${GITHUB_REPO}/git/refs/heads/main`);
+  const headCommitSha = refRes.data?.object?.sha;
+  const commitRes = await ghApi('GET', `/repos/${GITHUB_REPO}/git/commits/${headCommitSha}`);
+  const baseTreeSha = commitRes.data?.tree?.sha;
+
+  // 4. 新しいtreeを作成
+  const treeRes = await ghApi('POST', `/repos/${GITHUB_REPO}/git/trees`, {
+    base_tree: baseTreeSha,
+    tree: [{ path: GITHUB_PAGES_PATH, mode: '100644', type: 'blob', sha: blobSha }],
+  });
+  if (treeRes.status !== 201) { console.log('tree作成失敗:', treeRes.status); return; }
+
+  // 5. commitを作成
+  const now = new Date();
+  const dateLabel = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const newCommitRes = await ghApi('POST', `/repos/${GITHUB_REPO}/git/commits`, {
+    message: `auto: ダッシュボード更新 ${dateLabel}`,
+    tree: treeRes.data.sha,
+    parents: [headCommitSha],
+  });
+  if (newCommitRes.status !== 201) { console.log('commit作成失敗:', newCommitRes.status); return; }
+
+  // 6. refを更新
+  const updateRes = await ghApi('PATCH', `/repos/${GITHUB_REPO}/git/refs/heads/main`, { sha: newCommitRes.data.sha });
+  console.log(`ダッシュボード自動デプロイ完了: commit=${newCommitRes.data.sha?.substring(0, 7)}, status=${updateRes.status}`);
 }
 
 // ============================
@@ -5437,10 +5510,7 @@ function renderSalesTab() {
     const fcCmpYm = getCompareMonth(currentMonth, compareMode);
     const fcCmpSales = fcCmpYm ? sumField(getMonthData(D.allByMonth, fcCmpYm), 'sales') : null;
     const fcChange = fcCmpSales ? calcChange(landingForecast, fcCmpSales) : null;
-    const fcLabel = compareMode === 'yoy' ? '前年比' : '前月比';
-    let forecastSub = '';
-    if (fcChange !== null) forecastSub = fcLabel + ' ' + (fcChange > 0 ? '+' : '') + fcChange.toFixed(1) + '%';
-    cards.unshift({ label: '着地予測', value: yen(landingForecast), sub: forecastSub || undefined });
+    cards.unshift({ label: '着地予測', value: yen(landingForecast), change: fcChange });
   }
 
   document.getElementById('salesAndForecast').innerHTML = cards.map(c =>
@@ -5580,7 +5650,22 @@ function renderSalesTab() {
       '0と5のつく日': 'rgba(33,150,243,0.10)',
       'いちばの日': 'rgba(156,39,176,0.12)',
     };
-    const majorEvents = (D.rakutenEvents || []).filter(evt => {
+    // 定期イベントを自動生成（表示月の範囲で）
+    const recurringEvents = [];
+    if (dailyDates.length > 0) {
+      const firstDate = dailyDates[0], lastDate = dailyDates[dailyDates.length - 1];
+      const cur = new Date(firstDate + 'T00:00:00');
+      const end = new Date(lastDate + 'T00:00:00');
+      while (cur <= end) {
+        const dd = cur.getDate(), ds = cur.toISOString().substring(0, 10);
+        if (dd === 1) recurringEvents.push({ title: 'ワンダフルデー', startDate: ds, endDate: ds });
+        if (dd % 5 === 0) recurringEvents.push({ title: '0と5のつく日', startDate: ds, endDate: ds });
+        if (dd === 18) recurringEvents.push({ title: 'いちばの日', startDate: ds, endDate: ds });
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    const allEvents = [...(D.rakutenEvents || []), ...recurringEvents];
+    const majorEvents = allEvents.filter(evt => {
       const t = evt.title || '';
       return t.includes('マラソン') || t.includes('スーパーSALE') || t.includes('ワンダフルデー') || t.includes('0と5のつく日') || t.includes('いちばの日');
     });
