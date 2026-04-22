@@ -48,6 +48,17 @@ functions.http('fetchRppReport', async (req, res) => {
     }
   }
 
+  // ダッシュボードデプロイモード
+  if (req.query.mode === 'deploy_dashboard') {
+    try {
+      await deployDashboardToGithub();
+      return res.status(200).json({ status: 'ok', message: 'Dashboard deployed to GitHub Pages' });
+    } catch (err) {
+      console.error('Deploy dashboard error:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // 受注データ取得モード（RMS WEB API）
   if (req.query.mode === 'fetch_orders') {
     try {
@@ -3260,12 +3271,13 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
 
   if (dataRows.length === 0) return;
 
-  // 日付文字列を正規化（「2026年4月17日」→「2026年04月17日」、「2026/4/17」→「2026/04/17」）
+  // 日付文字列を正規化（「2026年4月17日」→「2026年04月17日」、「2026/4/17」→「2026/04/17」、「2026年4月」→「2026年04月」）
   const normalizeDate = (val) => {
     if (!val || typeof val !== 'string') return val || '';
-    // 「YYYY年M月D日」→「YYYY年MM月DD日」
     return val.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) =>
       `${y}年${m.padStart(2, '0')}月${d.padStart(2, '0')}日`
+    ).replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) =>
+      `${y}年${m.padStart(2, '0')}月`
     ).replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) =>
       `${y}/${m.padStart(2, '0')}/${d.padStart(2, '0')}`
     );
@@ -3616,10 +3628,10 @@ async function fetchOrdersFromRmsApi(query) {
   const datasetId = 'rakuten';
   const tableId = 'orders';
 
-  // 期間パラメータ: from=YYYY-MM-DD, to=YYYY-MM-DD (デフォルト過去6ヶ月)
+  // 期間パラメータ: from=YYYY-MM-DD, to=YYYY-MM-DD (デフォルト: 過去720日=約2年)
   const now = new Date();
   const defaultFrom = new Date(now);
-  defaultFrom.setMonth(defaultFrom.getMonth() - 6);
+  defaultFrom.setDate(defaultFrom.getDate() - 720);
   const fromDate = query.from || defaultFrom.toISOString().substring(0, 10);
   const toDate = query.to || now.toISOString().substring(0, 10);
 
@@ -3635,7 +3647,8 @@ async function fetchOrdersFromRmsApi(query) {
       dateType: 1, // 注文日
       startDatetime: startDate + 'T00:00:00+0900',
       endDatetime: endDate + 'T23:59:59+0900',
-      PaginationRequestModel: { requestRecordsAmount: 1000, requestPage: page, SortModelList: [{ sortColumn: 1, sortDirection: 1 }] }
+      orderProgressList: [100, 200, 300, 400, 500, 600, 700, 800, 900],
+      PaginationRequestModel: { requestRecordsAmount: 1000, requestPage: page, SortModelList: [{ sortColumn: 1, sortDirection: 2 }] }
     });
 
     return new Promise((resolve, reject) => {
@@ -3810,20 +3823,32 @@ async function fetchOrdersFromRmsApi(query) {
     await dataset.createTable(tableId, { schema: { fields: Object.keys(flatRows[0]).map(k => ({ name: k, type: typeof flatRows[0][k] === 'number' ? 'FLOAT64' : 'STRING' })) } });
   }
 
-  // 重複除去: 既存のorderNumberを取得して差分のみ挿入
+  // reset=true の場合、テーブルを一度空にしてから全件投入
+  const doReset = query.reset === 'true' || query.reset === '1';
   let existingOrderNumbers = new Set();
-  try {
-    const [existingRows] = await bigquery.query({
-      query: `SELECT DISTINCT orderNumber FROM \`${projectId}.${datasetId}.${tableId}\``,
-    });
-    existingRows.forEach(r => existingOrderNumbers.add(r.orderNumber));
-    console.log(`fetchOrdersFromRmsApi: ${existingOrderNumbers.size} existing orders in BigQuery`);
-  } catch (e) {
-    console.log(`fetchOrdersFromRmsApi: could not read existing orders: ${e.message?.substring(0, 80)}`);
-  }
+  let newRows = flatRows;
 
-  const newRows = flatRows.filter(r => !existingOrderNumbers.has(r.orderNumber));
-  console.log(`fetchOrdersFromRmsApi: ${newRows.length} new rows to insert`);
+  if (doReset) {
+    console.log(`fetchOrdersFromRmsApi: RESET mode — truncating table`);
+    try {
+      await bigquery.query({ query: `DELETE FROM \`${projectId}.${datasetId}.${tableId}\` WHERE TRUE` });
+      console.log(`fetchOrdersFromRmsApi: table truncated`);
+    } catch (e) {
+      console.log(`fetchOrdersFromRmsApi: truncate failed (${e.message?.substring(0, 80)}), will try full insert`);
+    }
+  } else {
+    try {
+      const [existingRows] = await bigquery.query({
+        query: `SELECT DISTINCT orderNumber FROM \`${projectId}.${datasetId}.${tableId}\``,
+      });
+      existingRows.forEach(r => existingOrderNumbers.add(r.orderNumber));
+      console.log(`fetchOrdersFromRmsApi: ${existingOrderNumbers.size} existing orders in BigQuery`);
+    } catch (e) {
+      console.log(`fetchOrdersFromRmsApi: could not read existing orders: ${e.message?.substring(0, 80)}`);
+    }
+    newRows = flatRows.filter(r => !existingOrderNumbers.has(r.orderNumber));
+  }
+  console.log(`fetchOrdersFromRmsApi: ${newRows.length} rows to insert (reset=${doReset})`);
 
   if (newRows.length > 0) {
     // 500行ずつバッチ挿入
@@ -6561,7 +6586,7 @@ function renderRepeatTab() {
 
   document.getElementById('repeatCards').innerHTML = [
     { label: '総顧客数', value: comma(totalCust) },
-    { label: 'F1（初回購入）', value: comma(totalCust) },
+    { label: 'F1（初回購入）', value: comma(firstTimersCnt) },
     { label: 'F2（2回目購入）', value: comma(repeatersCnt) },
     { label: 'F2転換率', value: pct(f2RateVal), sub: 'F2÷F1' },
   ].map(c => '<div class="metric-card"><div class="metric-label">' + c.label + '</div><div class="metric-value">' + c.value + '</div>' + (c.sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + c.sub + '</div>' : '') + '</div>').join('');
