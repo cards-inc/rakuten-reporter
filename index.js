@@ -67,9 +67,13 @@ functions.http('fetchRppReport', async (req, res) => {
       const targets = (req.query.sheets || 'rpp_item_raw,rpp_kw_raw').split(',');
       const normDate = (v) => {
         if (!v || typeof v !== 'string') return v || '';
-        return v.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`)
-               .replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`)
-               .replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) => `${y}-${m.padStart(2,'0')}`);
+        const mFull = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+        if (mFull) return `${mFull[1]}年${parseInt(mFull[2])}月${parseInt(mFull[3])}日`;
+        const mSlash = v.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+        if (mSlash) return `${mSlash[1]}年${parseInt(mSlash[2])}月${parseInt(mSlash[3])}日`;
+        const mYM = v.match(/^(\d{4})-(\d{1,2})$/);
+        if (mYM) return `${mYM[1]}年${parseInt(mYM[2])}月`;
+        return v;
       };
       const results = [];
       for (const sheetName of targets) {
@@ -84,7 +88,7 @@ functions.http('fetchRppReport', async (req, res) => {
         }
         if (changed > 0) {
           await sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A:ZZ` });
-          await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: rows } });
+          await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A1`, valueInputOption: 'RAW', requestBody: { values: rows } });
         }
         results.push({ sheet: sheetName, rows: rows.length - 1, datesFixed: changed });
       }
@@ -3363,13 +3367,16 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
 
   const normalizeDate = (val) => {
     if (!val || typeof val !== 'string') return val || '';
-    return val.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) =>
-      `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    ).replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) =>
-      `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
-    ).replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) =>
-      `${y}-${m.padStart(2, '0')}`
-    );
+    // YYYY-MM-DD → YYYY年M月D日
+    const mFull = val.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (mFull) return `${mFull[1]}年${parseInt(mFull[2])}月${parseInt(mFull[3])}日`;
+    // YYYY/MM/DD → YYYY年M月D日
+    const mSlash = val.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    if (mSlash) return `${mSlash[1]}年${parseInt(mSlash[2])}月${parseInt(mSlash[3])}日`;
+    // YYYY-MM → YYYY年M月
+    const mYM = val.match(/^(\d{4})-(\d{1,2})$/);
+    if (mYM) return `${mYM[1]}年${parseInt(mYM[2])}月`;
+    return val;
   };
 
   // キーカラムのインデックスを特定（指定がなければ先頭4列）
@@ -3463,7 +3470,7 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!A1`,
-    valueInputOption: 'USER_ENTERED',
+    valueInputOption: 'RAW',
     requestBody: { values: [headers, ...mergedRows] },
   });
 
@@ -5455,9 +5462,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="panel-title">販促分析</div>
   <div class="section-box" style="margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px">
     <span class="filter-label">期間</span>
-    <input type="date" id="promoDateFrom" class="filter-select" style="width:auto">
-    <span>～</span>
-    <input type="date" id="promoDateTo" class="filter-select" style="width:auto">
+    <select id="promoMonthFilter" class="filter-select" style="width:auto"></select>
   </div>
   <div class="section-box">
     <div class="sub-tabs" id="promoSubTabs">
@@ -6497,9 +6502,8 @@ function getAllMonthData(dataByMonth) {
   return all;
 }
 function renderAdsTab() {
-  const fromDate = document.getElementById('adDateFrom').value;
-  const toDate = document.getElementById('adDateTo').value;
-  const getData = (byMonth) => (fromDate && toDate) ? getDateRangeData(byMonth, fromDate, toDate) : getMonthData(byMonth, 'all');
+  const currentMonth = document.getElementById('monthFilter').value;
+  const getData = (byMonth) => getMonthData(byMonth, currentMonth);
   const rppData = getData(D.rppByMonth);
   const tdaData = getData(D.tdaByMonth);
   const adData = getData(D.adByMonth);
@@ -7685,32 +7689,25 @@ function renderPromoTab() {
   const promo = D.promoAnalysis;
   if (!promo) return;
   const allOrders = promo.promoOrders || [];
-  const promoFrom = el('promoDateFrom').value;
-  const promoTo = el('promoDateTo').value;
+  const filterMonth = el('promoMonthFilter').value;
 
   if (!promoFilterInited) {
     promoFilterInited = true;
-    const allDates = allOrders.map(r => r.ym + '-01').sort();
-    const today = new Date().toISOString().substring(0, 10);
-    if (allDates.length > 0) {
-      el('promoDateFrom').value = allDates[0];
-      el('promoDateTo').value = today;
-    }
-    el('promoDateFrom').addEventListener('change', () => renderPromoTab());
-    el('promoDateTo').addEventListener('change', () => renderPromoTab());
+    const months = [...new Set(allOrders.map(r => r.ym))].sort().reverse();
+    months.forEach(ym => { const o = document.createElement('option'); o.value = ym; o.textContent = D.monthLabels[ym] || ym; el('promoMonthFilter').appendChild(o); });
+    if (months.length > 0) el('promoMonthFilter').value = months[0];
+    el('promoMonthFilter').addEventListener('change', () => renderPromoTab());
   }
 
-  const orders = (promoFrom && promoTo) ? allOrders.filter(r => r.ym >= promoFrom.substring(0, 7) && r.ym <= promoTo.substring(0, 7)) : allOrders;
-  const filterMonth = null;
+  const orders = filterMonth ? allOrders.filter(r => r.ym === filterMonth) : allOrders;
 
   // ── クーポン（月フィルタのみ、商品フィルタ対象外） ──
   const couponMasterList = promo.couponSummary || [];
   const cgm = promo.couponGetMonthly || [];
   let cgmF = cgm, cdmF = promo.couponDiscountMonthly || [];
-  if (promoFrom && promoTo) {
-    const pf = promoFrom.substring(0, 7), pt = promoTo.substring(0, 7);
-    cgmF = cgm.filter(r => r.month >= pf && r.month <= pt);
-    cdmF = cdmF.filter(r => r.month >= pf && r.month <= pt);
+  if (filterMonth) {
+    cgmF = cgm.filter(r => r.month === filterMonth);
+    cdmF = cdmF.filter(r => r.month === filterMonth);
   }
   const totalGetCount = cgmF.reduce((s, r) => s + r.totalGet, 0);
   const totalUsedCount = cgmF.reduce((s, r) => s + r.totalUsed, 0);
@@ -7930,13 +7927,8 @@ function updateFilterUI(tabId) {
     filterBar.style.display = 'none';
   } else {
     filterBar.style.display = '';
-    if (tabId === 'tab-ads') {
-      filterGroupMonth.style.display = 'none';
-      filterGroupDateRange.style.display = '';
-    } else {
-      filterGroupMonth.style.display = '';
-      filterGroupDateRange.style.display = 'none';
-    }
+    filterGroupMonth.style.display = '';
+    filterGroupDateRange.style.display = 'none';
     if (compareGroup) compareGroup.style.display = (noCompareTabs.includes(tabId) || tabId === 'tab-ads') ? 'none' : '';
   }
 }
@@ -8008,22 +8000,7 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
   });
 });
 
-// Ad date range filter
-(function initAdDateRange() {
-  const allDates = [];
-  Object.values(D.rppByMonth || {}).forEach(arr => arr.forEach(r => { if (r.date) allDates.push(r.date); }));
-  Object.values(D.allByMonth || {}).forEach(arr => arr.forEach(r => { if (r.date) allDates.push(r.date); }));
-  allDates.sort();
-  if (allDates.length > 0) {
-    const curMonth = D.months[D.months.length - 1] || '';
-    const monthStart = curMonth ? curMonth + '-01' : allDates[0];
-    const today = new Date().toISOString().substring(0, 10);
-    document.getElementById('adDateFrom').value = monthStart;
-    document.getElementById('adDateTo').value = allDates[allDates.length - 1] <= today ? allDates[allDates.length - 1] : today;
-  }
-})();
-document.getElementById('adDateFrom').addEventListener('change', renderAdsTab);
-document.getElementById('adDateTo').addEventListener('change', renderAdsTab);
+// Ad tab uses monthFilter (same as sales tab)
 
 // Product metric selector
 document.getElementById('productMetricSelect').addEventListener('change', renderProductMonthlyTable);
