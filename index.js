@@ -2591,8 +2591,8 @@ async function processRppDownloads(downloads) {
         const parts = d.split('～').map(s => s.trim());
         if (parts[0] === parts[1]) d = parts[0];
       }
-      const jm = d.match(/(\d{4})年(\d{2})月(\d{2})日/);
-      if (jm) d = `${jm[1]}-${jm[2]}-${jm[3]}`;
+      const jm = d.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (jm) d = `${jm[1]}-${jm[2].padStart(2,'0')}-${jm[3].padStart(2,'0')}`;
       r['日付'] = d;
     });
 
