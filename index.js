@@ -59,6 +59,41 @@ functions.http('fetchRppReport', async (req, res) => {
     }
   }
 
+  // シート日付正規化モード
+  if (req.query.mode === 'normalize_dates') {
+    try {
+      const auth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+      const sheets = google.sheets({ version: 'v4', auth });
+      const targets = (req.query.sheets || 'rpp_item_raw,rpp_kw_raw').split(',');
+      const normDate = (v) => {
+        if (!v || typeof v !== 'string') return v || '';
+        return v.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`)
+               .replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) => `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`)
+               .replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) => `${y}-${m.padStart(2,'0')}`);
+      };
+      const results = [];
+      for (const sheetName of targets) {
+        const data = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A:ZZ` });
+        const rows = data.data.values || [];
+        if (rows.length < 2) { results.push({ sheet: sheetName, status: 'empty' }); continue; }
+        const headers = rows[0];
+        const dateIdxs = headers.reduce((a, h, i) => { if (h && (h.includes('日付') || h.includes('取得月') || h === '年月')) a.push(i); return a; }, []);
+        let changed = 0;
+        for (let i = 1; i < rows.length; i++) {
+          dateIdxs.forEach(ci => { if (rows[i][ci]) { const nv = normDate(rows[i][ci]); if (nv !== rows[i][ci]) { rows[i][ci] = nv; changed++; } } });
+        }
+        if (changed > 0) {
+          await sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A:ZZ` });
+          await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `${sheetName}!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: rows } });
+        }
+        results.push({ sheet: sheetName, rows: rows.length - 1, datesFixed: changed });
+      }
+      return res.status(200).json({ status: 'ok', results });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
   // 受注データ取得モード（RMS WEB API）
   if (req.query.mode === 'fetch_orders') {
     try {
@@ -3373,13 +3408,13 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
 
   // 既存データを全列取得
   let existingData = new Map(); // key → row
+  const dateColIndices = headers.reduce((acc, h, i) => { if (h && (h.includes('日付') || h.includes('取得月') || h === '年月')) acc.push(i); return acc; }, []);
   try {
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: `${sheetName}!A:ZZ`,
     });
     const existingRows = existing.data.values || [];
-    const dateColIndices = headers.reduce((acc, h, i) => { if (h && (h.includes('日付') || h.includes('取得月') || h === '年月')) acc.push(i); return acc; }, []);
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
       if (row.length === 0) continue;
@@ -3789,6 +3824,9 @@ async function fetchOrdersFromRmsApi(query) {
           throw new Error(`RMS API error: ${msg}`);
         }
       }
+      if (!result.orderNumberList) {
+        console.log(`fetchOrdersFromRmsApi: response keys: ${Object.keys(result).join(',')}, raw: ${JSON.stringify(result).substring(0, 300)}`);
+      }
       const orderNums = result.orderNumberList || [];
       allOrderNumbers.push(...orderNums);
       totalPages = result.PaginationResponseModel?.totalPages || 1;
@@ -4131,8 +4169,8 @@ async function generateDashboardHtml() {
   console.log(`Dashboard order_raw: headers=${orderRaw.headers.length}, data=${orderRaw.data.length}, first5headers=${orderRaw.headers.slice(0, 5).join(',')}`);
   if (orderRaw.data.length > 0) {
     const sample = orderRaw.data[0];
-    console.log(`Dashboard order_raw sample keys: ${Object.keys(sample).slice(0, 10).join(',')}`);
-    console.log(`Dashboard order_raw sample email: ${sample.ordererEmailAddress || sample['メールアドレス'] || 'NONE'}`);
+    console.log(`Dashboard order_raw sample keys: ${Object.keys(sample).join(',')}`);
+    console.log(`Dashboard order_raw sample pointRate=${sample.pointRate}, dealFlag=${sample.dealFlag}, usedPoint=${sample.usedPoint}`);
   }
 
   // BigQueryからクーポンマスタデータを取得
@@ -5416,8 +5454,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 <div class="tab-panel" id="tab-promo">
   <div class="panel-title">販促分析</div>
   <div class="section-box" style="margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px">
-    <span class="filter-label">月</span>
-    <select id="promoMonthFilter" class="filter-select" style="width:auto"></select>
+    <span class="filter-label">期間</span>
+    <input type="date" id="promoDateFrom" class="filter-select" style="width:auto">
+    <span>～</span>
+    <input type="date" id="promoDateTo" class="filter-select" style="width:auto">
   </div>
   <div class="section-box">
     <div class="sub-tabs" id="promoSubTabs">
@@ -6734,8 +6774,17 @@ function renderAdsTab() {
     { key: 'reward', label: '報酬', fmt: v => yen(v) },
   ], afiProducts, { limit: 30 });
 
-  // Affiliate by rate with ratio
-  const afiRateData = (D.afiByRateRows || []).slice();
+  // Affiliate by rate with ratio (computed from filtered afiData)
+  const afiByRateClient = {};
+  afiData.forEach(r => {
+    const rateRaw = r.rateStr || '不明';
+    const rate = String(rateRaw).includes('%') ? rateRaw : rateRaw + '%';
+    if (!afiByRateClient[rate]) afiByRateClient[rate] = { rate, sales: 0, reward: 0, count: 0 };
+    afiByRateClient[rate].sales += r.sales || 0;
+    afiByRateClient[rate].reward += r.reward || 0;
+    afiByRateClient[rate].count += 1;
+  });
+  const afiRateData = Object.values(afiByRateClient).sort((a, b) => b.sales - a.sales);
   const afiRateTotalSales = afiRateData.reduce((s, r) => s + (r.sales || 0), 0);
   const afiRateWithRatio = afiRateData.map(r => ({ ...r, salesRatio: afiRateTotalSales > 0 ? (r.sales / afiRateTotalSales * 100) : 0 }));
   buildTable('afiByRateTableWrap', [
@@ -7636,25 +7685,32 @@ function renderPromoTab() {
   const promo = D.promoAnalysis;
   if (!promo) return;
   const allOrders = promo.promoOrders || [];
-  const filterMonth = el('promoMonthFilter').value;
+  const promoFrom = el('promoDateFrom').value;
+  const promoTo = el('promoDateTo').value;
 
   if (!promoFilterInited) {
     promoFilterInited = true;
-    const months = [...new Set(allOrders.map(r => r.ym))].sort().reverse();
-    months.forEach(ym => { const o = document.createElement('option'); o.value = ym; o.textContent = D.monthLabels[ym] || ym; el('promoMonthFilter').appendChild(o); });
-    if (months.length > 0) el('promoMonthFilter').value = months[0];
-    el('promoMonthFilter').addEventListener('change', () => renderPromoTab());
+    const allDates = allOrders.map(r => r.ym + '-01').sort();
+    const today = new Date().toISOString().substring(0, 10);
+    if (allDates.length > 0) {
+      el('promoDateFrom').value = allDates[0];
+      el('promoDateTo').value = today;
+    }
+    el('promoDateFrom').addEventListener('change', () => renderPromoTab());
+    el('promoDateTo').addEventListener('change', () => renderPromoTab());
   }
 
-  const orders = filterMonth ? allOrders.filter(r => r.ym === filterMonth) : allOrders;
+  const orders = (promoFrom && promoTo) ? allOrders.filter(r => r.ym >= promoFrom.substring(0, 7) && r.ym <= promoTo.substring(0, 7)) : allOrders;
+  const filterMonth = null;
 
   // ── クーポン（月フィルタのみ、商品フィルタ対象外） ──
   const couponMasterList = promo.couponSummary || [];
   const cgm = promo.couponGetMonthly || [];
   let cgmF = cgm, cdmF = promo.couponDiscountMonthly || [];
-  if (filterMonth) {
-    cgmF = cgm.filter(r => r.month === filterMonth);
-    cdmF = cdmF.filter(r => r.month === filterMonth);
+  if (promoFrom && promoTo) {
+    const pf = promoFrom.substring(0, 7), pt = promoTo.substring(0, 7);
+    cgmF = cgm.filter(r => r.month >= pf && r.month <= pt);
+    cdmF = cdmF.filter(r => r.month >= pf && r.month <= pt);
   }
   const totalGetCount = cgmF.reduce((s, r) => s + r.totalGet, 0);
   const totalUsedCount = cgmF.reduce((s, r) => s + r.totalUsed, 0);
@@ -7726,87 +7782,120 @@ function renderPromoTab() {
     });
   }
 
-  // ── ポイント（allOrders から全月集計） ──
+  // ── ポイント（倍率別集計） ──
   const ptAggFn = (src) => {
     const byMonth = {};
+    const rates = new Set();
     const seen = {};
     src.forEach(r => {
       if (seen[r.on]) return;
       seen[r.on] = true;
-      if (!byMonth[r.ym]) byMonth[r.ym] = { pointUpOrders: 0, normalPtOrders: 0, grantedPoints: 0 };
       const pr = Number(r.pr) || 1;
+      if (!byMonth[r.ym]) byMonth[r.ym] = { normalPtOrders: 0, grantedPoints: 0, byRate: {} };
       byMonth[r.ym].grantedPoints += Math.round((r.p || 0) * pr / 100);
-      if (pr > 1) byMonth[r.ym].pointUpOrders++;
-      else byMonth[r.ym].normalPtOrders++;
+      if (pr > 1) {
+        const rk = pr + '倍';
+        rates.add(rk);
+        byMonth[r.ym].byRate[rk] = (byMonth[r.ym].byRate[rk] || 0) + 1;
+      } else {
+        byMonth[r.ym].normalPtOrders++;
+      }
     });
-    return Object.entries(byMonth).map(([ym, v]) => ({ month: ym, ...v })).sort((a, b) => a.month.localeCompare(b.month));
+    const sortedRates = [...rates].sort((a, b) => parseFloat(a) - parseFloat(b));
+    const rows = Object.entries(byMonth).map(([ym, v]) => {
+      const pointUpOrders = Object.values(v.byRate).reduce((s, n) => s + n, 0);
+      return { month: ym, normalPtOrders: v.normalPtOrders, pointUpOrders, grantedPoints: v.grantedPoints, byRate: v.byRate };
+    }).sort((a, b) => a.month.localeCompare(b.month));
+    return { rows, rates: sortedRates };
   };
-  const ptmAll = ptAggFn(allOrders);
-  const ptmFiltered = ptAggFn(orders);
+  const ptAll = ptAggFn(allOrders);
+  const ptFiltered = ptAggFn(orders);
 
-  const totalGranted = ptmFiltered.reduce((s, r) => s + r.grantedPoints, 0);
-  const totalNormalPt = ptmFiltered.reduce((s, r) => s + r.normalPtOrders, 0);
-  const totalPointUp = ptmFiltered.reduce((s, r) => s + r.pointUpOrders, 0);
-  el('pointKpiRow').innerHTML = kpiCard('ポイント付与額', yen(totalGranted), '', '') + kpiCard('通常ポイント注文数', comma(totalNormalPt), '', '') + kpiCard('ポイント倍率UP注文数', comma(totalPointUp), '', '');
+  const totalGranted = ptFiltered.rows.reduce((s, r) => s + r.grantedPoints, 0);
+  const totalNormalPt = ptFiltered.rows.reduce((s, r) => s + r.normalPtOrders, 0);
+  const totalPointUp = ptFiltered.rows.reduce((s, r) => s + r.pointUpOrders, 0);
+  const ptUpRate = (totalNormalPt + totalPointUp) > 0 ? Math.round(totalPointUp / (totalNormalPt + totalPointUp) * 1000) / 10 : 0;
+  let ptKpiHtml = kpiCard('ポイント付与額', yen(totalGranted), '', '') + kpiCard('通常ポイント注文数', comma(totalNormalPt), '', '') + kpiCard('ポイント倍率UP注文数', comma(totalPointUp), '', '') + kpiCard('ポイント倍率UP比率', pct1(ptUpRate), '', '');
+  const ptRateKpi = {};
+  ptFiltered.rows.forEach(r => { Object.entries(r.byRate).forEach(([rk, cnt]) => { ptRateKpi[rk] = (ptRateKpi[rk] || 0) + cnt; }); });
+  ptAll.rates.forEach(rk => { if (ptRateKpi[rk]) ptKpiHtml += kpiCard(rk, comma(ptRateKpi[rk]) + '件', '', ''); });
+  el('pointKpiRow').innerHTML = ptKpiHtml;
 
+  const rateColors = ['rgba(39,174,96,0.7)', 'rgba(41,128,185,0.7)', 'rgba(142,68,173,0.7)', 'rgba(243,156,18,0.7)', 'rgba(231,76,60,0.7)', 'rgba(22,160,133,0.7)', 'rgba(192,57,43,0.7)', 'rgba(44,62,80,0.7)'];
   destroyChart('chartPointRateTrend');
-  if (ptmAll.length > 0) {
+  if (ptAll.rows.length > 0) {
+    const datasets = ptAll.rates.map((rk, i) => ({
+      label: rk, data: ptAll.rows.map(r => r.byRate[rk] || 0), backgroundColor: rateColors[i % rateColors.length]
+    }));
+    datasets.push({ label: '通常ポイント', data: ptAll.rows.map(r => r.normalPtOrders), backgroundColor: 'rgba(189,195,199,0.5)' });
     chartInstances['chartPointRateTrend'] = new Chart(el('chartPointRateTrend'), {
-      type: 'bar', data: {
-        labels: ptmAll.map(r => D.monthLabels[r.month] || r.month),
-        datasets: [
-          { label: 'ポイント倍率UP', data: ptmAll.map(r => r.pointUpOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
-          { label: '通常ポイント', data: ptmAll.map(r => r.normalPtOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
-        ]
-      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+      type: 'bar', data: { labels: ptAll.rows.map(r => D.monthLabels[r.month] || r.month), datasets },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
-  if (ptmFiltered.length > 0) {
-    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>倍率UP注文</th><th>通常ポイント注文</th><th>付与額</th></tr></thead><tbody>' +
-      ptmFiltered.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointUpOrders) + '</td><td>' + comma(r.normalPtOrders) + '</td><td>' + yen(r.grantedPoints) + '</td></tr>').join('') + '</tbody></table>';
+  if (ptFiltered.rows.length > 0) {
+    const allRates = ptAll.rates;
+    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th>' + allRates.map(r => '<th>' + r + '</th>').join('') + '<th>通常</th><th>付与額</th></tr></thead><tbody>' +
+      ptFiltered.rows.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td>' + allRates.map(rk => '<td>' + comma(r.byRate[rk] || 0) + '</td>').join('') + '<td>' + comma(r.normalPtOrders) + '</td><td>' + yen(r.grantedPoints) + '</td></tr>').join('') + '</tbody></table>';
   } else {
     el('pointRateMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
   }
 
-  // ── DEAL（allOrders から全月集計） ──
+  // ── DEAL（倍率別集計） ──
   const dealAggFn = (src) => {
     const byMonth = {};
+    const rates = new Set();
     const seen = {};
     src.forEach(r => {
       if (seen[r.on]) return;
       seen[r.on] = true;
-      if (!byMonth[r.ym]) byMonth[r.ym] = { dealOrders: 0, normalOrders: 0, dealSales: 0, normalSales: 0 };
-      if (String(r.df) === '1') { byMonth[r.ym].dealOrders++; byMonth[r.ym].dealSales += r.p; }
-      else { byMonth[r.ym].normalOrders++; byMonth[r.ym].normalSales += r.p; }
+      if (String(r.df) !== '1') return;
+      const pr = Number(r.pr) || 1;
+      if (!byMonth[r.ym]) byMonth[r.ym] = { dealOrders: 0, dealSales: 0, grantedPoints: 0, byRate: {} };
+      byMonth[r.ym].dealOrders++;
+      byMonth[r.ym].dealSales += r.p;
+      byMonth[r.ym].grantedPoints += Math.round((r.p || 0) * pr / 100);
+      const rk = pr + '倍';
+      rates.add(rk);
+      byMonth[r.ym].byRate[rk] = (byMonth[r.ym].byRate[rk] || 0) + 1;
     });
-    return Object.entries(byMonth).map(([ym, v]) => ({ month: ym, ...v, dealRate: (v.dealOrders + v.normalOrders) > 0 ? Math.round(v.dealOrders / (v.dealOrders + v.normalOrders) * 1000) / 10 : 0 })).sort((a, b) => a.month.localeCompare(b.month));
+    const sortedRates = [...rates].sort((a, b) => parseFloat(a) - parseFloat(b));
+    const rows = Object.entries(byMonth).map(([ym, v]) => ({ month: ym, ...v })).sort((a, b) => a.month.localeCompare(b.month));
+    return { rows, rates: sortedRates };
   };
-  const dmAll = dealAggFn(allOrders);
-  const dmFiltered = dealAggFn(orders);
+  const dealAll = dealAggFn(allOrders);
+  const dealFiltered = dealAggFn(orders);
 
-  const totalDealOrders = dmFiltered.reduce((s, r) => s + r.dealOrders, 0);
-  const totalDealSales2 = dmFiltered.reduce((s, r) => s + r.dealSales, 0);
-  const totalAllDeal = dmFiltered.reduce((s, r) => s + r.dealOrders + r.normalOrders, 0);
-  const overallDealRate = totalAllDeal > 0 ? Math.round(totalDealOrders / totalAllDeal * 1000) / 10 : 0;
-  el('dealKpiRow').innerHTML = kpiCard('DEAL注文数', comma(totalDealOrders), '', '') + kpiCard('DEAL売上', yen(totalDealSales2), '', '') + kpiCard('DEAL比率', pct1(overallDealRate), '', '');
+  const totalAllOrders = (() => { const s = {}; let c = 0; orders.forEach(r => { if (!s[r.on]) { s[r.on] = true; c++; } }); return c; })();
+  const totalDealOrders = dealFiltered.rows.reduce((s, r) => s + r.dealOrders, 0);
+  const totalDealSales2 = dealFiltered.rows.reduce((s, r) => s + r.dealSales, 0);
+  const totalDealPoints = dealFiltered.rows.reduce((s, r) => s + r.grantedPoints, 0);
+  const overallDealRate = totalAllOrders > 0 ? Math.round(totalDealOrders / totalAllOrders * 1000) / 10 : 0;
+  const totalNonDealOrders = totalAllOrders - totalDealOrders;
+  let dealKpiHtml = kpiCard('通常注文数', comma(totalNonDealOrders), '', '') + kpiCard('DEAL注文数', comma(totalDealOrders), '', '');
+  const dealRateKpi = {};
+  dealFiltered.rows.forEach(r => { Object.entries(r.byRate).forEach(([rk, cnt]) => { dealRateKpi[rk] = (dealRateKpi[rk] || 0) + cnt; }); });
+  dealAll.rates.forEach(rk => { if (dealRateKpi[rk]) dealKpiHtml += kpiCard('DEAL ' + rk, comma(dealRateKpi[rk]) + '件', '', ''); });
+  dealKpiHtml += kpiCard('DEALポイント付与額', yen(totalDealPoints), '', '') + kpiCard('DEAL比率', pct1(overallDealRate), '', '');
+  el('dealKpiRow').innerHTML = dealKpiHtml;
 
   destroyChart('chartDealTrend');
-  if (dmAll.length > 0) {
+  if (dealAll.rows.length > 0) {
+    const dealRateColors = ['rgba(192,57,43,0.7)', 'rgba(231,76,60,0.7)', 'rgba(243,156,18,0.7)', 'rgba(241,196,15,0.7)', 'rgba(46,204,113,0.7)', 'rgba(52,152,219,0.7)', 'rgba(155,89,182,0.7)', 'rgba(44,62,80,0.7)'];
+    const dealDatasets = dealAll.rates.map((rk, i) => ({
+      label: rk, data: dealAll.rows.map(r => r.byRate[rk] || 0), backgroundColor: dealRateColors[i % dealRateColors.length]
+    }));
     chartInstances['chartDealTrend'] = new Chart(el('chartDealTrend'), {
-      type: 'bar', data: {
-        labels: dmAll.map(r => D.monthLabels[r.month] || r.month),
-        datasets: [
-          { label: 'DEAL注文', data: dmAll.map(r => r.dealOrders), backgroundColor: 'rgba(192,57,43,0.7)' },
-          { label: '通常注文', data: dmAll.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
-        ]
-      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+      type: 'bar', data: { labels: dealAll.rows.map(r => D.monthLabels[r.month] || r.month), datasets: dealDatasets },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
-  if (dmFiltered.length > 0) {
-    el('dealMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>DEAL注文</th><th>DEAL売上</th><th>通常注文</th><th>通常売上</th><th>DEAL比率</th></tr></thead><tbody>' +
-      dmFiltered.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.dealOrders) + '</td><td>' + yen(r.dealSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + pct1(r.dealRate) + '</td></tr>').join('') + '</tbody></table>';
+  if (dealFiltered.rows.length > 0) {
+    const allDealRates = dealAll.rates;
+    el('dealMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th>' + allDealRates.map(r => '<th>' + r + '</th>').join('') + '<th>DEAL計</th><th>DEAL売上</th><th>付与額</th><th>DEAL比率</th></tr></thead><tbody>' +
+      dealFiltered.rows.map(r => { const totalM = (() => { const s2 = {}; let c2 = 0; orders.filter(o => o.ym === r.month).forEach(o => { if (!s2[o.on]) { s2[o.on] = true; c2++; } }); return c2; })(); const dr = totalM > 0 ? Math.round(r.dealOrders / totalM * 1000) / 10 : 0; return '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td>' + allDealRates.map(rk => '<td>' + comma(r.byRate[rk] || 0) + '</td>').join('') + '<td>' + comma(r.dealOrders) + '</td><td>' + yen(r.dealSales) + '</td><td>' + yen(r.grantedPoints) + '</td><td>' + pct1(dr) + '</td></tr>'; }).join('') + '</tbody></table>';
   } else {
     el('dealMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">DEALデータがありません</p>';
   }
