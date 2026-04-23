@@ -3326,15 +3326,14 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
 
   if (dataRows.length === 0) return;
 
-  // 日付文字列を正規化（「2026年4月17日」→「2026年04月17日」、「2026/4/17」→「2026/04/17」、「2026年4月」→「2026年04月」）
   const normalizeDate = (val) => {
     if (!val || typeof val !== 'string') return val || '';
     return val.replace(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) =>
-      `${y}年${m.padStart(2, '0')}月${d.padStart(2, '0')}日`
-    ).replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) =>
-      `${y}年${m.padStart(2, '0')}月`
+      `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
     ).replace(/(\d{4})\/(\d{1,2})\/(\d{1,2})/g, (_, y, m, d) =>
-      `${y}/${m.padStart(2, '0')}/${d.padStart(2, '0')}`
+      `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
+    ).replace(/(\d{4})年(\d{1,2})月(?!\d)/g, (_, y, m) =>
+      `${y}-${m.padStart(2, '0')}`
     );
   };
 
@@ -3380,9 +3379,11 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
       range: `${sheetName}!A:ZZ`,
     });
     const existingRows = existing.data.values || [];
+    const dateColIndices = headers.reduce((acc, h, i) => { if (h && (h.includes('日付') || h.includes('取得月') || h === '年月')) acc.push(i); return acc; }, []);
     for (let i = 1; i < existingRows.length; i++) {
       const row = existingRows[i] || [];
       if (row.length === 0) continue;
+      dateColIndices.forEach(ci => { if (row[ci]) row[ci] = normalizeDate(row[ci]); });
       const key = makeKey(row);
       // 同キーが既にある場合、データが多い方を採用
       if (existingData.has(key)) {
@@ -3397,10 +3398,10 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
     console.log('既存データ取得エラー:', e.message);
   }
 
-  // 新データをマージ（同キーは上書き、ただしデータが充実している方を採用）
   let newCount = 0;
   let updateCount = 0;
   for (const row of dataRows) {
+    dateColIndices.forEach(ci => { if (row[ci]) row[ci] = normalizeDate(row[ci]); });
     const key = makeKey(row);
     if (existingData.has(key)) {
       updateCount++;
@@ -5152,7 +5153,7 @@ body {
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes countUp { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 .tab-panel { display: none; }
-.tab-panel.active { display: block; animation: fadeIn 0.3s ease-out; }
+.tab-panel.active { display: block; animation: fadeIn 0.3s ease-out; min-height: 80vh; }
 .sub-panel { animation: fadeIn 0.25s ease-out; }
 .panel-title { font-size: 18px; font-weight: 700; margin-bottom: 16px; color: var(--c-text); }
 .cards-grid {
@@ -5436,14 +5437,10 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     </div>
     <div class="sub-panel active" id="promo-coupon">
       <div id="couponKpiRow" class="kpi-row"></div>
-      <div class="grid-2" style="margin-top:16px">
+      <div style="margin-top:16px">
         <div class="section-box">
           <div class="section-title">月別クーポン獲得数推移</div>
           <div class="chart-wrap chart-md"><canvas id="chartCouponGetTrend"></canvas></div>
-        </div>
-        <div class="section-box">
-          <div class="section-title">月別クーポン値引額推移</div>
-          <div class="chart-wrap chart-md"><canvas id="chartCouponTrend"></canvas></div>
         </div>
       </div>
       <div class="section-box" style="margin-top:16px">
@@ -5464,7 +5461,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="sub-panel" id="promo-point">
       <div id="pointKpiRow" class="kpi-row"></div>
       <div class="section-box" style="margin-top:16px">
-        <div class="section-title">月別ポイント注文推移</div>
+        <div class="section-title">ポイント別注文数推移</div>
         <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
       </div>
       <div class="section-box" style="margin-top:16px">
@@ -7675,17 +7672,17 @@ function renderPromoTab() {
   const activeCoupons = couponMasterList.filter(c => c.isActive).length;
   const totalShopDiscount = cdmF.reduce((s, r) => s + r.shopDiscount, 0);
 
-  el('couponKpiRow').innerHTML = kpiCard('クーポン獲得数', comma(totalGetCount), '', '') + kpiCard('利用数', comma(totalUsedCount), '', '') + kpiCard('利用率', totalUseRate + '%', '', '') + kpiCard('割引金額', yen(totalShopDiscount), '', '');
+  el('couponKpiRow').innerHTML = kpiCard('クーポン獲得数', comma(totalGetCount), '', '') + kpiCard('利用数', comma(totalUsedCount), '', '') + kpiCard('利用率', totalUseRate + '%', '', '');
 
   destroyChart('chartCouponGetTrend');
-  if (cgmF.length > 0) {
+  if (cgm.length > 0) {
     chartInstances['chartCouponGetTrend'] = new Chart(el('chartCouponGetTrend'), {
       type: 'bar', data: {
-        labels: cgmF.map(r => D.monthLabels[r.month] || r.month),
+        labels: cgm.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: '獲得数', data: cgmF.map(r => r.totalGet), backgroundColor: 'rgba(39,174,96,0.7)', yAxisID: 'y' },
-          { label: '利用数', data: cgmF.map(r => r.totalUsed), backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y' },
-          { label: '利用率(%)', data: cgmF.map(r => r.useRate), type: 'line', borderColor: '#e74c3c', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+          { label: '獲得数', data: cgm.map(r => r.totalGet), backgroundColor: 'rgba(39,174,96,0.7)', yAxisID: 'y' },
+          { label: '利用数', data: cgm.map(r => r.totalUsed), backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y' },
+          { label: '利用率(%)', data: cgm.map(r => r.useRate), type: 'line', borderColor: '#e74c3c', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
         ]
       }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, position: 'left', title: { display: true, text: '件数' } }, y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: '利用率' } } } }
     });
@@ -7715,7 +7712,7 @@ function renderPromoTab() {
     }).join('') + '</tbody></table>';
 
   destroyChart('chartCouponRanking');
-  const top15 = [...filteredCoupons].sort((a, b) => (b.totalGet || 0) - (a.totalGet || 0)).slice(0, 15).reverse();
+  const top15 = [...filteredCoupons].sort((a, b) => (b.totalGet || 0) - (a.totalGet || 0)).slice(0, 15);
   if (top15.length > 0 && top15[top15.length - 1].totalGet > 0) {
     chartInstances['chartCouponRanking'] = new Chart(el('chartCouponRanking'), {
       type: 'bar', data: {
@@ -7729,7 +7726,7 @@ function renderPromoTab() {
   }
 
   destroyChart('chartCouponUseRateRanking');
-  const rateTop15 = [...filteredCoupons].filter(c => c.totalGet >= 10).map(c => ({ ...c, useRate: Math.round(c.totalUsed / c.totalGet * 1000) / 10 })).sort((a, b) => b.useRate - a.useRate).slice(0, 15).reverse();
+  const rateTop15 = [...filteredCoupons].filter(c => c.totalGet >= 10).map(c => ({ ...c, useRate: Math.round(c.totalUsed / c.totalGet * 1000) / 10 })).sort((a, b) => b.useRate - a.useRate).slice(0, 15);
   if (rateTop15.length > 0) {
     chartInstances['chartCouponUseRateRanking'] = new Chart(el('chartCouponUseRateRanking'), {
       type: 'bar', data: {
@@ -7745,26 +7742,33 @@ function renderPromoTab() {
   orders.forEach(r => {
     if (ptSeen[r.on]) return;
     ptSeen[r.on] = true;
-    if (!ptByMonth[r.ym]) ptByMonth[r.ym] = { pointOrders: 0, normalOrders: 0, pointSales: 0, normalSales: 0, usedPoints: 0 };
-    if (r.pr > 1 || r.up > 0) {
+    if (!ptByMonth[r.ym]) ptByMonth[r.ym] = { pointUpOrders: 0, normalPtOrders: 0, pointOrders: 0, normalOrders: 0, pointSales: 0, normalSales: 0, usedPoints: 0, grantedPoints: 0 };
+    const ptAmt = Math.round((r.p || 0) * (r.pr || 1) / 100);
+    ptByMonth[r.ym].grantedPoints += ptAmt;
+    if (r.pr > 1) {
+      ptByMonth[r.ym].pointUpOrders++;
+      ptByMonth[r.ym].pointOrders++;
+      ptByMonth[r.ym].pointSales += r.p;
+      ptByMonth[r.ym].usedPoints += r.up || 0;
+    } else if (r.up > 0) {
+      ptByMonth[r.ym].normalPtOrders++;
       ptByMonth[r.ym].pointOrders++;
       ptByMonth[r.ym].pointSales += r.p;
       ptByMonth[r.ym].usedPoints += r.up || 0;
     } else {
+      ptByMonth[r.ym].normalPtOrders++;
       ptByMonth[r.ym].normalOrders++;
       ptByMonth[r.ym].normalSales += r.p;
     }
   });
   const ptm = Object.entries(ptByMonth)
-    .map(([ym, v]) => ({ month: ym, pointOrders: v.pointOrders, normalOrders: v.normalOrders, pointSales: Math.round(v.pointSales), normalSales: Math.round(v.normalSales), usedPoints: Math.round(v.usedPoints), pointRate: (v.pointOrders + v.normalOrders) > 0 ? Math.round(v.pointOrders / (v.pointOrders + v.normalOrders) * 1000) / 10 : 0 }))
+    .map(([ym, v]) => ({ month: ym, pointUpOrders: v.pointUpOrders, normalPtOrders: v.normalPtOrders, pointOrders: v.pointOrders, normalOrders: v.normalOrders, pointSales: Math.round(v.pointSales), normalSales: Math.round(v.normalSales), usedPoints: Math.round(v.usedPoints), grantedPoints: Math.round(v.grantedPoints), pointRate: (v.pointOrders + v.normalOrders) > 0 ? Math.round(v.pointOrders / (v.pointOrders + v.normalOrders) * 1000) / 10 : 0 }))
     .sort((a, b) => a.month.localeCompare(b.month));
 
-  const totalPtOrders = ptm.reduce((s, r) => s + r.pointOrders, 0);
-  const totalPtSales = ptm.reduce((s, r) => s + r.pointSales, 0);
-  const totalPtUsed = ptm.reduce((s, r) => s + r.usedPoints, 0);
-  const totalAllPt = ptm.reduce((s, r) => s + r.pointOrders + r.normalOrders, 0);
-  const overallPtRate = totalAllPt > 0 ? Math.round(totalPtOrders / totalAllPt * 1000) / 10 : 0;
-  el('pointKpiRow').innerHTML = kpiCard('ポイント注文数', comma(totalPtOrders), '', '累計') + kpiCard('ポイント売上', yen(totalPtSales), '', '累計') + kpiCard('ポイント比率', pct1(overallPtRate), '', '') + kpiCard('ポイント利用額', yen(totalPtUsed), '', '累計');
+  const totalGranted = ptm.reduce((s, r) => s + r.grantedPoints, 0);
+  const totalNormalPt = ptm.reduce((s, r) => s + r.normalPtOrders, 0);
+  const totalPointUp = ptm.reduce((s, r) => s + r.pointUpOrders, 0);
+  el('pointKpiRow').innerHTML = kpiCard('ポイント付与額', yen(totalGranted), '', '累計') + kpiCard('通常ポイント注文数', comma(totalNormalPt), '', '累計') + kpiCard('ポイント倍率UP注文数', comma(totalPointUp), '', '累計');
 
   destroyChart('chartPointRateTrend');
   if (ptm.length > 0) {
@@ -7772,16 +7776,16 @@ function renderPromoTab() {
       type: 'bar', data: {
         labels: ptm.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: 'ポイント注文', data: ptm.map(r => r.pointOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
-          { label: '通常注文', data: ptm.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
+          { label: 'ポイント倍率UP', data: ptm.map(r => r.pointUpOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
+          { label: '通常ポイント', data: ptm.map(r => r.normalPtOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
         ]
       }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
   if (ptm.length > 0) {
-    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>ポイント注文</th><th>ポイント売上</th><th>通常注文</th><th>通常売上</th><th>利用額</th><th>ポイント比率</th></tr></thead><tbody>' +
-      ptm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointOrders) + '</td><td>' + yen(r.pointSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + yen(r.usedPoints) + '</td><td>' + pct1(r.pointRate) + '</td></tr>').join('') + '</tbody></table>';
+    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>倍率UP注文</th><th>通常ポイント注文</th><th>付与額</th><th>ポイント比率</th></tr></thead><tbody>' +
+      ptm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointUpOrders) + '</td><td>' + comma(r.normalPtOrders) + '</td><td>' + yen(r.grantedPoints) + '</td><td>' + pct1(r.pointRate) + '</td></tr>').join('') + '</tbody></table>';
   } else {
     el('pointRateMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
   }
