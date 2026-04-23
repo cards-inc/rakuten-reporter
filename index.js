@@ -4724,24 +4724,14 @@ async function generateDashboardHtml() {
     getCount: Number(c.getCount) || 0,
     availCount: Number(c.availCount) || 0,
   }));
-  const couponByName = {};
-  couponMaster.forEach(c => {
-    if (!couponByName[c.name]) couponByName[c.name] = { name: c.name, discountType: c.discountType, discountValue: c.discountValue, codes: [], totalIssued: 0, totalGet: 0, totalUsed: 0, startDate: c.startDate, endDate: c.endDate };
-    couponByName[c.name].codes.push(c.code);
-    couponByName[c.name].totalIssued += c.issueCount;
-    couponByName[c.name].totalGet += c.getCount;
-    couponByName[c.name].totalUsed += c.availCount;
-  });
-  const couponSummaryRows = Object.values(couponByName)
-    .map(c => {
-      const sd = c.startDate ? c.startDate.substring(0, 10) : '';
-      const ed = c.endDate ? c.endDate.substring(0, 10) : '';
-      const startYM = sd ? sd.substring(0, 7) : '';
-      const now = new Date();
-      const isActive = ed ? new Date(ed) > now : false;
-      return { ...c, startDateStr: sd, endDateStr: ed, startYM, codeCount: c.codes.length, isActive };
-    })
-    .sort((a, b) => (b.startDateStr || '').localeCompare(a.startDateStr || ''));
+  const couponSummaryRows = couponMaster.map(c => {
+    const sd = c.startDate ? c.startDate.substring(0, 10) : '';
+    const ed = c.endDate ? c.endDate.substring(0, 10) : '';
+    const startYM = sd ? sd.substring(0, 7) : '';
+    const now = new Date();
+    const isActive = ed ? new Date(ed) > now : false;
+    return { name: c.name, code: c.code, discountType: c.discountType, discountValue: c.discountValue, totalIssued: c.issueCount, totalGet: c.getCount, totalUsed: c.availCount, startDate: c.startDate, endDate: c.endDate, startDateStr: sd, endDateStr: ed, startYM, isActive };
+  }).sort((a, b) => (b.startDateStr || '').localeCompare(a.startDateStr || ''));
 
   // クーポンAPI月別集計（startDate基準で月ごとの獲得数をまとめる）
   const couponGetByMonth = {};
@@ -7736,96 +7726,87 @@ function renderPromoTab() {
     });
   }
 
-  // ── ポイント（orders から再集計、DEAL形式） ──
-  const ptByMonth = {};
-  const ptSeen = {};
-  orders.forEach(r => {
-    if (ptSeen[r.on]) return;
-    ptSeen[r.on] = true;
-    if (!ptByMonth[r.ym]) ptByMonth[r.ym] = { pointUpOrders: 0, normalPtOrders: 0, pointOrders: 0, normalOrders: 0, pointSales: 0, normalSales: 0, usedPoints: 0, grantedPoints: 0 };
-    const ptAmt = Math.round((r.p || 0) * (r.pr || 1) / 100);
-    ptByMonth[r.ym].grantedPoints += ptAmt;
-    if (r.pr > 1) {
-      ptByMonth[r.ym].pointUpOrders++;
-      ptByMonth[r.ym].pointOrders++;
-      ptByMonth[r.ym].pointSales += r.p;
-      ptByMonth[r.ym].usedPoints += r.up || 0;
-    } else if (r.up > 0) {
-      ptByMonth[r.ym].normalPtOrders++;
-      ptByMonth[r.ym].pointOrders++;
-      ptByMonth[r.ym].pointSales += r.p;
-      ptByMonth[r.ym].usedPoints += r.up || 0;
-    } else {
-      ptByMonth[r.ym].normalPtOrders++;
-      ptByMonth[r.ym].normalOrders++;
-      ptByMonth[r.ym].normalSales += r.p;
-    }
-  });
-  const ptm = Object.entries(ptByMonth)
-    .map(([ym, v]) => ({ month: ym, pointUpOrders: v.pointUpOrders, normalPtOrders: v.normalPtOrders, pointOrders: v.pointOrders, normalOrders: v.normalOrders, pointSales: Math.round(v.pointSales), normalSales: Math.round(v.normalSales), usedPoints: Math.round(v.usedPoints), grantedPoints: Math.round(v.grantedPoints), pointRate: (v.pointOrders + v.normalOrders) > 0 ? Math.round(v.pointOrders / (v.pointOrders + v.normalOrders) * 1000) / 10 : 0 }))
-    .sort((a, b) => a.month.localeCompare(b.month));
+  // ── ポイント（allOrders から全月集計） ──
+  const ptAggFn = (src) => {
+    const byMonth = {};
+    const seen = {};
+    src.forEach(r => {
+      if (seen[r.on]) return;
+      seen[r.on] = true;
+      if (!byMonth[r.ym]) byMonth[r.ym] = { pointUpOrders: 0, normalPtOrders: 0, grantedPoints: 0 };
+      const pr = Number(r.pr) || 1;
+      byMonth[r.ym].grantedPoints += Math.round((r.p || 0) * pr / 100);
+      if (pr > 1) byMonth[r.ym].pointUpOrders++;
+      else byMonth[r.ym].normalPtOrders++;
+    });
+    return Object.entries(byMonth).map(([ym, v]) => ({ month: ym, ...v })).sort((a, b) => a.month.localeCompare(b.month));
+  };
+  const ptmAll = ptAggFn(allOrders);
+  const ptmFiltered = ptAggFn(orders);
 
-  const totalGranted = ptm.reduce((s, r) => s + r.grantedPoints, 0);
-  const totalNormalPt = ptm.reduce((s, r) => s + r.normalPtOrders, 0);
-  const totalPointUp = ptm.reduce((s, r) => s + r.pointUpOrders, 0);
-  el('pointKpiRow').innerHTML = kpiCard('ポイント付与額', yen(totalGranted), '', '累計') + kpiCard('通常ポイント注文数', comma(totalNormalPt), '', '累計') + kpiCard('ポイント倍率UP注文数', comma(totalPointUp), '', '累計');
+  const totalGranted = ptmFiltered.reduce((s, r) => s + r.grantedPoints, 0);
+  const totalNormalPt = ptmFiltered.reduce((s, r) => s + r.normalPtOrders, 0);
+  const totalPointUp = ptmFiltered.reduce((s, r) => s + r.pointUpOrders, 0);
+  el('pointKpiRow').innerHTML = kpiCard('ポイント付与額', yen(totalGranted), '', '') + kpiCard('通常ポイント注文数', comma(totalNormalPt), '', '') + kpiCard('ポイント倍率UP注文数', comma(totalPointUp), '', '');
 
   destroyChart('chartPointRateTrend');
-  if (ptm.length > 0) {
+  if (ptmAll.length > 0) {
     chartInstances['chartPointRateTrend'] = new Chart(el('chartPointRateTrend'), {
       type: 'bar', data: {
-        labels: ptm.map(r => D.monthLabels[r.month] || r.month),
+        labels: ptmAll.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: 'ポイント倍率UP', data: ptm.map(r => r.pointUpOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
-          { label: '通常ポイント', data: ptm.map(r => r.normalPtOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
+          { label: 'ポイント倍率UP', data: ptmAll.map(r => r.pointUpOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
+          { label: '通常ポイント', data: ptmAll.map(r => r.normalPtOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
         ]
       }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
-  if (ptm.length > 0) {
-    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>倍率UP注文</th><th>通常ポイント注文</th><th>付与額</th><th>ポイント比率</th></tr></thead><tbody>' +
-      ptm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointUpOrders) + '</td><td>' + comma(r.normalPtOrders) + '</td><td>' + yen(r.grantedPoints) + '</td><td>' + pct1(r.pointRate) + '</td></tr>').join('') + '</tbody></table>';
+  if (ptmFiltered.length > 0) {
+    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>倍率UP注文</th><th>通常ポイント注文</th><th>付与額</th></tr></thead><tbody>' +
+      ptmFiltered.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointUpOrders) + '</td><td>' + comma(r.normalPtOrders) + '</td><td>' + yen(r.grantedPoints) + '</td></tr>').join('') + '</tbody></table>';
   } else {
     el('pointRateMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
   }
 
-  // ── DEAL（orders から再集計） ──
-  const dealByMonth = {};
-  const dealSeen = {};
-  orders.forEach(r => {
-    if (dealSeen[r.on]) return;
-    dealSeen[r.on] = true;
-    if (!dealByMonth[r.ym]) dealByMonth[r.ym] = { dealOrders: 0, normalOrders: 0, dealSales: 0, normalSales: 0 };
-    if (r.df === '1') { dealByMonth[r.ym].dealOrders++; dealByMonth[r.ym].dealSales += r.p; }
-    else { dealByMonth[r.ym].normalOrders++; dealByMonth[r.ym].normalSales += r.p; }
-  });
-  const dm = Object.entries(dealByMonth)
-    .map(([ym, v]) => ({ month: ym, dealOrders: v.dealOrders, normalOrders: v.normalOrders, dealSales: Math.round(v.dealSales), normalSales: Math.round(v.normalSales), dealRate: (v.dealOrders + v.normalOrders) > 0 ? Math.round(v.dealOrders / (v.dealOrders + v.normalOrders) * 1000) / 10 : 0 }))
-    .sort((a, b) => a.month.localeCompare(b.month));
+  // ── DEAL（allOrders から全月集計） ──
+  const dealAggFn = (src) => {
+    const byMonth = {};
+    const seen = {};
+    src.forEach(r => {
+      if (seen[r.on]) return;
+      seen[r.on] = true;
+      if (!byMonth[r.ym]) byMonth[r.ym] = { dealOrders: 0, normalOrders: 0, dealSales: 0, normalSales: 0 };
+      if (String(r.df) === '1') { byMonth[r.ym].dealOrders++; byMonth[r.ym].dealSales += r.p; }
+      else { byMonth[r.ym].normalOrders++; byMonth[r.ym].normalSales += r.p; }
+    });
+    return Object.entries(byMonth).map(([ym, v]) => ({ month: ym, ...v, dealRate: (v.dealOrders + v.normalOrders) > 0 ? Math.round(v.dealOrders / (v.dealOrders + v.normalOrders) * 1000) / 10 : 0 })).sort((a, b) => a.month.localeCompare(b.month));
+  };
+  const dmAll = dealAggFn(allOrders);
+  const dmFiltered = dealAggFn(orders);
 
-  const totalDealOrders = dm.reduce((s, r) => s + r.dealOrders, 0);
-  const totalDealSales2 = dm.reduce((s, r) => s + r.dealSales, 0);
-  const totalAllDeal = dm.reduce((s, r) => s + r.dealOrders + r.normalOrders, 0);
+  const totalDealOrders = dmFiltered.reduce((s, r) => s + r.dealOrders, 0);
+  const totalDealSales2 = dmFiltered.reduce((s, r) => s + r.dealSales, 0);
+  const totalAllDeal = dmFiltered.reduce((s, r) => s + r.dealOrders + r.normalOrders, 0);
   const overallDealRate = totalAllDeal > 0 ? Math.round(totalDealOrders / totalAllDeal * 1000) / 10 : 0;
-  el('dealKpiRow').innerHTML = kpiCard('DEAL注文数', comma(totalDealOrders), '', '累計') + kpiCard('DEAL売上', yen(totalDealSales2), '', '累計') + kpiCard('DEAL比率', pct1(overallDealRate), '', '');
+  el('dealKpiRow').innerHTML = kpiCard('DEAL注文数', comma(totalDealOrders), '', '') + kpiCard('DEAL売上', yen(totalDealSales2), '', '') + kpiCard('DEAL比率', pct1(overallDealRate), '', '');
 
   destroyChart('chartDealTrend');
-  if (dm.length > 0) {
+  if (dmAll.length > 0) {
     chartInstances['chartDealTrend'] = new Chart(el('chartDealTrend'), {
       type: 'bar', data: {
-        labels: dm.map(r => D.monthLabels[r.month] || r.month),
+        labels: dmAll.map(r => D.monthLabels[r.month] || r.month),
         datasets: [
-          { label: 'DEAL注文', data: dm.map(r => r.dealOrders), backgroundColor: 'rgba(192,57,43,0.7)' },
-          { label: '通常注文', data: dm.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
+          { label: 'DEAL注文', data: dmAll.map(r => r.dealOrders), backgroundColor: 'rgba(192,57,43,0.7)' },
+          { label: '通常注文', data: dmAll.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
         ]
       }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
-  if (dm.length > 0) {
+  if (dmFiltered.length > 0) {
     el('dealMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>DEAL注文</th><th>DEAL売上</th><th>通常注文</th><th>通常売上</th><th>DEAL比率</th></tr></thead><tbody>' +
-      dm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.dealOrders) + '</td><td>' + yen(r.dealSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + pct1(r.dealRate) + '</td></tr>').join('') + '</tbody></table>';
+      dmFiltered.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.dealOrders) + '</td><td>' + yen(r.dealSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + pct1(r.dealRate) + '</td></tr>').join('') + '</tbody></table>';
   } else {
     el('dealMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">DEALデータがありません</p>';
   }
