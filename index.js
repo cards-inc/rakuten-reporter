@@ -5499,12 +5499,20 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
         <div class="section-title">ポイント別注文数推移</div>
         <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
       </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">商品別ポイント注文比較</div>
+        <div id="pointProductTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:600px"></div>
+      </div>
     </div>
     <div class="sub-panel" id="promo-deal">
       <div id="dealKpiRow" class="kpi-row"></div>
       <div class="section-box" style="margin-top:16px">
         <div class="section-title">月別DEAL注文推移</div>
         <div class="chart-wrap chart-md"><canvas id="chartDealTrend"></canvas></div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">商品別DEAL注文比較</div>
+        <div id="dealProductTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:600px"></div>
       </div>
     </div>
   </div>
@@ -7820,6 +7828,25 @@ function renderPromoTab() {
     });
   }
 
+  // ── 商品別ポイント注文比較 ──
+  const ptByProduct = {};
+  const ptSeenProd = {};
+  orders.forEach(r => {
+    const key = r.on + '|' + r.mn;
+    if (ptSeenProd[key]) return;
+    ptSeenProd[key] = true;
+    const mn = r.mn || '不明';
+    if (!ptByProduct[mn]) ptByProduct[mn] = { normal: 0, up: 0 };
+    const pr = Number(r.pr) || 1;
+    if (pr > 1) { ptByProduct[mn].up++; } else { ptByProduct[mn].normal++; }
+  });
+  const ptProdRows = Object.entries(ptByProduct).map(([mn, v]) => ({ mn, normal: v.normal, up: v.up, total: v.normal + v.up })).sort((a, b) => b.total - a.total);
+  if (ptProdRows.length > 0) {
+    el('pointProductTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>商品管理番号</th><th>通常ポイント</th><th>倍率UP</th><th>合計</th><th>UP比率</th></tr></thead><tbody>' +
+      ptProdRows.map(r => '<tr><td>' + r.mn + '</td><td>' + comma(r.normal) + '</td><td>' + comma(r.up) + '</td><td>' + comma(r.total) + '</td><td>' + pct1(r.total > 0 ? Math.round(r.up / r.total * 1000) / 10 : 0) + '</td></tr>').join('') + '</tbody></table>';
+  } else {
+    el('pointProductTableWrap').innerHTML = '<p style="color:#888;padding:20px">データがありません</p>';
+  }
 
   // ── DEAL（倍率別集計） ──
   const dealAggFn = (src) => {
@@ -7865,6 +7892,25 @@ function renderPromoTab() {
       type: 'bar', data: { labels: dealAll.rows.map(r => D.monthLabels[r.month] || r.month), datasets: dealDatasets },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
+  }
+
+  // ── 商品別DEAL注文比較 ──
+  const dealByProduct = {};
+  const dealSeenProd = {};
+  orders.forEach(r => {
+    const key = r.on + '|' + r.mn;
+    if (dealSeenProd[key]) return;
+    dealSeenProd[key] = true;
+    const mn = r.mn || '不明';
+    if (!dealByProduct[mn]) dealByProduct[mn] = { normal: 0, deal: 0 };
+    if (String(r.df) === '1') { dealByProduct[mn].deal++; } else { dealByProduct[mn].normal++; }
+  });
+  const dealProdRows = Object.entries(dealByProduct).map(([mn, v]) => ({ mn, normal: v.normal, deal: v.deal, total: v.normal + v.deal })).sort((a, b) => b.total - a.total);
+  if (dealProdRows.length > 0) {
+    el('dealProductTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>商品管理番号</th><th>通常注文</th><th>DEAL注文</th><th>合計</th><th>DEAL比率</th></tr></thead><tbody>' +
+      dealProdRows.map(r => '<tr><td>' + r.mn + '</td><td>' + comma(r.normal) + '</td><td>' + comma(r.deal) + '</td><td>' + comma(r.total) + '</td><td>' + pct1(r.total > 0 ? Math.round(r.deal / r.total * 1000) / 10 : 0) + '</td></tr>').join('') + '</tbody></table>';
+  } else {
+    el('dealProductTableWrap').innerHTML = '<p style="color:#888;padding:20px">データがありません</p>';
   }
 
 }
