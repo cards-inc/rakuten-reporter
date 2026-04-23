@@ -5296,9 +5296,15 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
 
 <div class="filter-bar">
   <div class="filter-bar-inner">
-    <div class="filter-group">
+    <div class="filter-group" id="filterGroupMonth">
       <span class="filter-label">期間</span>
       <select id="monthFilter" class="filter-select"></select>
+    </div>
+    <div class="filter-group" id="filterGroupDateRange" style="display:none">
+      <span class="filter-label">期間</span>
+      <input type="date" id="adDateFrom" class="filter-select" style="width:auto">
+      <span style="margin:0 4px">〜</span>
+      <input type="date" id="adDateTo" class="filter-select" style="width:auto">
     </div>
     <div class="filter-group">
       <span class="filter-label">比較</span>
@@ -5736,10 +5742,18 @@ function changeHtml(changeVal) {
 function getMonthData(dataByMonth, ym) {
   if (ym === 'all') {
     const all = [];
-    Object.values(dataByMonth).forEach(arr => all.push(...arr));
+    Object.values(dataByMonth || {}).forEach(arr => all.push(...arr));
     return all;
   }
-  return dataByMonth[ym] || [];
+  return (dataByMonth || {})[ym] || [];
+}
+function getDateRangeData(dataByMonth, fromDate, toDate) {
+  const all = [];
+  Object.values(dataByMonth || {}).forEach(arr => arr.forEach(r => {
+    const d = r.date || '';
+    if (d >= fromDate && d <= toDate) all.push(r);
+  }));
+  return all;
 }
 
 function sumField(arr, field) {
@@ -6462,16 +6476,17 @@ function getAllMonthData(dataByMonth) {
   return all;
 }
 function renderAdsTab() {
-  const adMonth = document.getElementById('monthFilter').value || 'all';
-  const rppData = getMonthData(D.rppByMonth, adMonth);
-  const tdaData = getMonthData(D.tdaByMonth, adMonth);
-  const adData = getMonthData(D.adByMonth, adMonth);
-  const cpaData = getMonthData(D.cpaByMonth || {}, adMonth);
-  const rppItemData = getMonthData(D.rppItemByMonth, adMonth);
-  // rpp_kw_raw: 月フィルター（getMonthData使用で日付範囲対応）
-  const rppKwData = getMonthData(D.rppKwByMonth, adMonth);
+  const fromDate = document.getElementById('adDateFrom').value;
+  const toDate = document.getElementById('adDateTo').value;
+  const getData = (byMonth) => (fromDate && toDate) ? getDateRangeData(byMonth, fromDate, toDate) : getMonthData(byMonth, 'all');
+  const rppData = getData(D.rppByMonth);
+  const tdaData = getData(D.tdaByMonth);
+  const adData = getData(D.adByMonth);
+  const cpaData = getData(D.cpaByMonth || {});
+  const rppItemData = getData(D.rppItemByMonth);
+  const rppKwData = getData(D.rppKwByMonth);
 
-  const cmpYm = getCompareMonth(adMonth, compareMode);
+  const cmpYm = null;
 
   const rppSpend = sumField(rppData, 'spend');
   const rppSales = sumField(rppData, 'sales');
@@ -6502,7 +6517,7 @@ function renderAdsTab() {
   }
 
   // TACOS = 広告費 / 全体売上
-  const storeSalesData = getMonthData(D.allByMonth, adMonth);
+  const storeSalesData = getData(D.allByMonth);
   const storeTotalSales = sumField(storeSalesData, 'sales');
   const tacos = storeTotalSales > 0 ? (totalSpend / storeTotalSales * 100) : 0;
 
@@ -6713,7 +6728,7 @@ function renderAdsTab() {
   ].map(k => '<div class="kpi-item"><div class="kpi-label">' + k.label + '</div><div class="kpi-val">' + k.value + '</div></div>').join('');
 
   // アフィリエイト
-  const afiData = getMonthData(D.afiByMonth, adMonth);
+  const afiData = getData(D.afiByMonth);
   const afiTotalSales = sumField(afiData, 'sales');
   const afiTotalReward = sumField(afiData, 'reward');
   document.getElementById('afiKpiRow').innerHTML = [
@@ -7889,15 +7904,22 @@ function renderAll() {
 function updateFilterUI(tabId) {
   const noFilterTabs = ['tab-customer', 'tab-promo'];
   const noCompareTabs = ['tab-product'];
-  const mf = document.getElementById('monthFilter');
   const filterBar = document.querySelector('.filter-bar');
-  const compareGroup = filterBar.querySelectorAll('.filter-group')[1];
+  const filterGroupMonth = document.getElementById('filterGroupMonth');
+  const filterGroupDateRange = document.getElementById('filterGroupDateRange');
+  const compareGroup = filterBar.querySelectorAll('.filter-group')[2];
   if (noFilterTabs.includes(tabId)) {
     filterBar.style.display = 'none';
   } else {
     filterBar.style.display = '';
-    if (compareGroup) compareGroup.style.display = noCompareTabs.includes(tabId) ? 'none' : '';
-    mf.style.display = '';
+    if (tabId === 'tab-ads') {
+      filterGroupMonth.style.display = 'none';
+      filterGroupDateRange.style.display = '';
+    } else {
+      filterGroupMonth.style.display = '';
+      filterGroupDateRange.style.display = 'none';
+    }
+    if (compareGroup) compareGroup.style.display = (noCompareTabs.includes(tabId) || tabId === 'tab-ads') ? 'none' : '';
   }
 }
 document.querySelectorAll('.main-tab').forEach(tab => {
@@ -7967,6 +7989,23 @@ document.querySelectorAll('.compare-btn').forEach(btn => {
     renderAll();
   });
 });
+
+// Ad date range filter
+(function initAdDateRange() {
+  const allDates = [];
+  Object.values(D.rppByMonth || {}).forEach(arr => arr.forEach(r => { if (r.date) allDates.push(r.date); }));
+  Object.values(D.allByMonth || {}).forEach(arr => arr.forEach(r => { if (r.date) allDates.push(r.date); }));
+  allDates.sort();
+  if (allDates.length > 0) {
+    const curMonth = D.months[D.months.length - 1] || '';
+    const monthStart = curMonth ? curMonth + '-01' : allDates[0];
+    const today = new Date().toISOString().substring(0, 10);
+    document.getElementById('adDateFrom').value = monthStart;
+    document.getElementById('adDateTo').value = allDates[allDates.length - 1] <= today ? allDates[allDates.length - 1] : today;
+  }
+})();
+document.getElementById('adDateFrom').addEventListener('change', renderAdsTab);
+document.getElementById('adDateTo').addEventListener('change', renderAdsTab);
 
 // Product metric selector
 document.getElementById('productMetricSelect').addEventListener('change', renderProductMonthlyTable);
