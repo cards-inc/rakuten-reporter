@@ -4033,12 +4033,12 @@ async function fetchRakutenEvents() {
     });
   }
 
-  // 過去12ヶ月＋今月＋来月の範囲で月別取得
+  // 過去24ヶ月＋今月＋来月の範囲で月別取得
   const now = new Date();
   const allEvents = [];
   const seen = new Set();
   const months = [];
-  for (let offset = -12; offset <= 1; offset++) {
+  for (let offset = -24; offset <= 1; offset++) {
     const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
   }
@@ -5426,9 +5426,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   <div class="panel-title">販促分析</div>
   <div class="section-box" style="margin-bottom:12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:12px 16px">
     <span class="filter-label">月</span>
-    <select id="promoMonthFilter" class="filter-select" style="width:auto"><option value="">全期間</option></select>
-    <span class="filter-label">商品</span>
-    <select id="promoProductFilter" class="filter-select" style="width:auto;min-width:180px;max-width:350px"><option value="">すべて</option></select>
+    <select id="promoMonthFilter" class="filter-select" style="width:auto"></select>
   </div>
   <div class="section-box">
     <div class="sub-tabs" id="promoSubTabs">
@@ -5466,16 +5464,12 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="sub-panel" id="promo-point">
       <div id="pointKpiRow" class="kpi-row"></div>
       <div class="section-box" style="margin-top:16px">
-        <div class="section-title">月別ポイント倍率分布</div>
+        <div class="section-title">月別ポイント注文推移</div>
         <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
       </div>
       <div class="section-box" style="margin-top:16px">
-        <div class="section-title">ポイント倍率別 月別件数</div>
+        <div class="section-title">月別ポイント実績</div>
         <div id="pointRateMonthlyTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
-      </div>
-      <div class="section-box" style="margin-top:16px">
-        <div class="section-title">ポイント倍率UP 売上ランキング</div>
-        <div class="chart-wrap chart-md"><canvas id="chartPointRateProductRanking"></canvas></div>
       </div>
     </div>
     <div class="sub-panel" id="promo-deal">
@@ -7656,23 +7650,16 @@ function renderPromoTab() {
   if (!promo) return;
   const allOrders = promo.promoOrders || [];
   const filterMonth = el('promoMonthFilter').value;
-  const filterProduct = el('promoProductFilter').value;
 
   if (!promoFilterInited) {
     promoFilterInited = true;
     const months = [...new Set(allOrders.map(r => r.ym))].sort();
     months.forEach(ym => { const o = document.createElement('option'); o.value = ym; o.textContent = D.monthLabels[ym] || ym; el('promoMonthFilter').appendChild(o); });
-    const prods = {};
-    allOrders.forEach(r => { if (r.mn && !prods[r.mn]) prods[r.mn] = D.masterProducts[r.mn] || r.mn; });
-    Object.entries(prods).sort((a, b) => a[1].localeCompare(b[1])).forEach(([mn, name]) => { const o = document.createElement('option'); o.value = mn; o.textContent = name.substring(0, 40); el('promoProductFilter').appendChild(o); });
+    if (months.length > 0) el('promoMonthFilter').value = months[months.length - 1];
     el('promoMonthFilter').addEventListener('change', () => renderPromoTab());
-    el('promoProductFilter').addEventListener('change', () => renderPromoTab());
   }
 
-  let ordersByMonth = allOrders;
-  if (filterMonth) ordersByMonth = ordersByMonth.filter(r => r.ym === filterMonth);
-  let orders = ordersByMonth;
-  if (filterProduct) orders = orders.filter(r => r.mn === filterProduct);
+  const orders = filterMonth ? allOrders.filter(r => r.ym === filterMonth) : allOrders;
 
   // ── クーポン（月フィルタのみ、商品フィルタ対象外） ──
   const couponMasterList = promo.couponSummary || [];
@@ -7752,94 +7739,51 @@ function renderPromoTab() {
     });
   }
 
-  // ── ポイント（orders から再集計） ──
-  const pointRateByMonth = {};
-  const pointRateByProduct = {};
+  // ── ポイント（orders から再集計、DEAL形式） ──
+  const ptByMonth = {};
+  const ptSeen = {};
   orders.forEach(r => {
-    if (!r.pr || r.pr <= 0) return;
-    const rateKey = r.df === '1' ? 'DEAL' : String(r.pr) + '倍';
-    const mn = r.mn || '不明';
-    const sales = r.ip * r.u || r.p;
-    if (!pointRateByMonth[r.ym]) pointRateByMonth[r.ym] = {};
-    if (!pointRateByMonth[r.ym][rateKey]) pointRateByMonth[r.ym][rateKey] = { count: 0, sales: 0 };
-    pointRateByMonth[r.ym][rateKey].count++;
-    pointRateByMonth[r.ym][rateKey].sales += sales;
-    if (r.df === '1' || r.pr > 1) {
-      if (!pointRateByProduct[mn]) pointRateByProduct[mn] = {};
-      if (!pointRateByProduct[mn][rateKey]) pointRateByProduct[mn][rateKey] = { count: 0, sales: 0 };
-      pointRateByProduct[mn][rateKey].count++;
-      pointRateByProduct[mn][rateKey].sales += sales;
+    if (ptSeen[r.on]) return;
+    ptSeen[r.on] = true;
+    if (!ptByMonth[r.ym]) ptByMonth[r.ym] = { pointOrders: 0, normalOrders: 0, pointSales: 0, normalSales: 0, usedPoints: 0 };
+    if (r.pr > 1 || r.up > 0) {
+      ptByMonth[r.ym].pointOrders++;
+      ptByMonth[r.ym].pointSales += r.p;
+      ptByMonth[r.ym].usedPoints += r.up || 0;
+    } else {
+      ptByMonth[r.ym].normalOrders++;
+      ptByMonth[r.ym].normalSales += r.p;
     }
   });
-  const prm = Object.entries(pointRateByMonth)
-    .map(([ym, rates]) => ({ month: ym, rates: Object.entries(rates).map(([r, v]) => ({ rate: r, count: v.count, sales: Math.round(v.sales) })).sort((a, b) => b.count - a.count) }))
-    .sort((a, b) => a.month.localeCompare(b.month));
-  const prp = Object.entries(pointRateByProduct)
-    .map(([mn, rates]) => ({ product: mn, productName: D.masterProducts[mn] || mn, rates: Object.entries(rates).map(([r, v]) => ({ rate: r, count: v.count, sales: Math.round(v.sales) })) }))
-    .sort((a, b) => b.rates.reduce((s, r) => s + r.count, 0) - a.rates.reduce((s, r) => s + r.count, 0)).slice(0, 30);
-
-  const pointUsageByMonth = {};
-  const orderSeenPt = {};
-  orders.forEach(r => {
-    if (!r.up || r.up <= 0) return;
-    if (orderSeenPt[r.on]) return;
-    orderSeenPt[r.on] = true;
-    if (!pointUsageByMonth[r.ym]) pointUsageByMonth[r.ym] = { orders: 0, totalPoints: 0 };
-    pointUsageByMonth[r.ym].orders++;
-    pointUsageByMonth[r.ym].totalPoints += r.up;
-  });
-  const pum = Object.entries(pointUsageByMonth)
-    .map(([ym, v]) => ({ month: ym, orders: v.orders, totalPoints: Math.round(v.totalPoints) }))
+  const ptm = Object.entries(ptByMonth)
+    .map(([ym, v]) => ({ month: ym, pointOrders: v.pointOrders, normalOrders: v.normalOrders, pointSales: Math.round(v.pointSales), normalSales: Math.round(v.normalSales), usedPoints: Math.round(v.usedPoints), pointRate: (v.pointOrders + v.normalOrders) > 0 ? Math.round(v.pointOrders / (v.pointOrders + v.normalOrders) * 1000) / 10 : 0 }))
     .sort((a, b) => a.month.localeCompare(b.month));
 
-  const allRates = new Set();
-  prm.forEach(m => m.rates.forEach(r => allRates.add(r.rate)));
-  const ratesSorted = [...allRates].sort((a, b) => { if (a === 'DEAL') return 1; if (b === 'DEAL') return -1; return parseInt(a) - parseInt(b); });
-
-  const totalPointsUsed = pum.reduce((s, r) => s + r.totalPoints, 0);
-  const rateCounts = {};
-  prm.forEach(m => m.rates.forEach(r => { rateCounts[r.rate] = (rateCounts[r.rate] || 0) + r.count; }));
-  const rateKpis = ratesSorted.map(r => kpiCard(r === '1倍' ? '通常ポイント' : r, comma(rateCounts[r] || 0), '', '購入者数')).join('');
-  el('pointKpiRow').innerHTML = rateKpis + kpiCard('ポイント利用額', yen(totalPointsUsed), '', '');
+  const totalPtOrders = ptm.reduce((s, r) => s + r.pointOrders, 0);
+  const totalPtSales = ptm.reduce((s, r) => s + r.pointSales, 0);
+  const totalPtUsed = ptm.reduce((s, r) => s + r.usedPoints, 0);
+  const totalAllPt = ptm.reduce((s, r) => s + r.pointOrders + r.normalOrders, 0);
+  const overallPtRate = totalAllPt > 0 ? Math.round(totalPtOrders / totalAllPt * 1000) / 10 : 0;
+  el('pointKpiRow').innerHTML = kpiCard('ポイント注文数', comma(totalPtOrders), '', '累計') + kpiCard('ポイント売上', yen(totalPtSales), '', '累計') + kpiCard('ポイント比率', pct1(overallPtRate), '', '') + kpiCard('ポイント利用額', yen(totalPtUsed), '', '累計');
 
   destroyChart('chartPointRateTrend');
-  if (prm.length > 0) {
-    const colors = ['rgba(26,58,92,0.7)', 'rgba(230,126,34,0.7)', 'rgba(39,174,96,0.7)', 'rgba(192,57,43,0.7)', 'rgba(142,68,173,0.7)', 'rgba(243,156,18,0.7)'];
+  if (ptm.length > 0) {
     chartInstances['chartPointRateTrend'] = new Chart(el('chartPointRateTrend'), {
       type: 'bar', data: {
-        labels: prm.map(r => D.monthLabels[r.month] || r.month),
-        datasets: ratesSorted.filter(r => r !== '1倍').map((rate, i) => ({
-          label: rate,
-          data: prm.map(m => { const found = m.rates.find(r => r.rate === rate); return found ? found.count : 0; }),
-          backgroundColor: colors[i % colors.length],
-        }))
+        labels: ptm.map(r => D.monthLabels[r.month] || r.month),
+        datasets: [
+          { label: 'ポイント注文', data: ptm.map(r => r.pointOrders), backgroundColor: 'rgba(39,174,96,0.7)' },
+          { label: '通常注文', data: ptm.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
+        ]
       }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
     });
   }
 
-
-  if (prm.length > 0) {
-    const allRatesArr = ratesSorted;
-    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th>' + allRatesArr.map(r => '<th>' + r + '</th>').join('') + '<th>合計</th></tr></thead><tbody>' +
-      prm.map(m => {
-        const total = m.rates.reduce((s, r) => s + r.count, 0);
-        return '<tr><td>' + (D.monthLabels[m.month] || m.month) + '</td>' + allRatesArr.map(rate => { const found = m.rates.find(r => r.rate === rate); return '<td>' + (found ? comma(found.count) : '-') + '</td>'; }).join('') + '<td><strong>' + comma(total) + '</strong></td></tr>';
-      }).join('') + '</tbody></table>';
+  if (ptm.length > 0) {
+    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>ポイント注文</th><th>ポイント売上</th><th>通常注文</th><th>通常売上</th><th>利用額</th><th>ポイント比率</th></tr></thead><tbody>' +
+      ptm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.pointOrders) + '</td><td>' + yen(r.pointSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + yen(r.usedPoints) + '</td><td>' + pct1(r.pointRate) + '</td></tr>').join('') + '</tbody></table>';
   } else {
     el('pointRateMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
-  }
-
-  destroyChart('chartPointRateProductRanking');
-  if (prp.length > 0) {
-    const prpRanked = [...prp].map(p => ({ name: p.productName, sales: p.rates.reduce((s, r) => s + r.sales, 0), count: p.rates.reduce((s, r) => s + r.count, 0) })).sort((a, b) => b.sales - a.sales).slice(0, 15).reverse();
-    chartInstances['chartPointRateProductRanking'] = new Chart(el('chartPointRateProductRanking'), {
-      type: 'bar', data: {
-        labels: prpRanked.map(r => r.name.length > 25 ? r.name.substring(0, 25) + '…' : r.name),
-        datasets: [
-          { label: '売上', data: prpRanked.map(r => r.sales), backgroundColor: 'rgba(39,174,96,0.7)' },
-        ]
-      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => yen(ctx.raw) + ' / ' + comma(prpRanked[ctx.dataIndex].count) + '件' } } }, scales: { x: { beginAtZero: true, ticks: { callback: v => '¥' + Number(v).toLocaleString() } } } }
-    });
   }
 
   // ── DEAL（orders から再集計） ──
