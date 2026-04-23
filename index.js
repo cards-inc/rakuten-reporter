@@ -293,91 +293,126 @@ functions.http('fetchRppReport', async (req, res) => {
       await setRppDateRange(page, targetMonth.startStr, targetMonth.endStr);
       await clickButton(page, 'この条件でダウンロード');
 
-      // 6b: rpp_item_raw（商品別・月ごと）
-      console.log(`Step 6b [${targetMonth.label}]: rpp_item_raw ダウンロード...`);
-      const itemRadioClicked = await page.evaluate(() => {
-        for (const id of ['#rdReportTypeItem', '#rdReportTypeProduct', '#rdReportTypeShohin']) {
-          const r = document.querySelector(id); if (r) { r.click(); return id; }
-        }
-        for (const radio of document.querySelectorAll('input[type="radio"]')) {
-          const label = radio.parentElement?.textContent || '';
-          if (label.includes('商品別')) { radio.click(); return '商品別(label)'; }
-        }
-        return null;
-      });
-      console.log('商品別ラジオ:', itemRadioClicked);
-      await new Promise(r => setTimeout(r, 1000));
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodMonth'); if (r) r.click(); });
-      await new Promise(r => setTimeout(r, 2000));
-      // 月ごと選択後に日付設定（YYYY-MM）
-      await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
-      await clickButton(page, '全商品レポートダウンロード');
-
-      // 6c: rpp_kw_raw（キーワード別・月ごと）
-      console.log(`Step 6c [${targetMonth.label}]: rpp_kw_raw ダウンロード...`);
-      const kwRadioClicked = await page.evaluate(() => {
-        for (const id of ['#rdReportTypeKeyword', '#rdReportTypeKw']) {
-          const r = document.querySelector(id); if (r) { r.click(); return id; }
-        }
-        for (const radio of document.querySelectorAll('input[type="radio"]')) {
-          const label = radio.parentElement?.textContent || '';
-          if (label.includes('キーワード別')) { radio.click(); return 'キーワード別(label)'; }
-        }
-        return null;
-      });
-      console.log('キーワード別ラジオ:', kwRadioClicked);
-      await new Promise(r => setTimeout(r, 1000));
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodMonth'); if (r) r.click(); });
-      await new Promise(r => setTimeout(r, 2000));
-      await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
-      await clickButton(page, '全キーワードレポートダウンロード');
-
-      // ダウンロード履歴でCSV取得
-      console.log(`Step 7 [${targetMonth.label}]: ダウンロード履歴ページへ...`);
+      // rpp_all_raw ダウンロード履歴取得
+      console.log(`Step 7a [${targetMonth.label}]: rpp_all_raw ダウンロード履歴...`);
       await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', { waitUntil: 'networkidle2', timeout: 30000 });
       await new Promise(r => setTimeout(r, 2000));
-
       for (let retry = 0; retry < 6; retry++) {
-        const status = await page.evaluate(() => {
+        const allDone = await page.evaluate(() => {
           const t = document.body.innerText;
-          return {
-            item: t.includes('全商品レポートダウンロード') && t.includes('完了'),
-            kw: t.includes('全キーワードレポートダウンロード') && t.includes('完了'),
-            all: t.includes('この条件でダウンロード') && t.includes('完了'),
-          };
+          return t.includes('この条件でダウンロード') && t.includes('完了');
         });
-        console.log(`ダウンロード履歴確認 [${targetMonth.label}] (${retry + 1}/6):`, JSON.stringify(status));
-
-        if (status.item || status.kw || status.all) {
-          const targets = [];
-          if (status.all) targets.push('この条件でダウンロード');
-          if (status.item) targets.push('全商品レポートダウンロード');
-          if (status.kw) targets.push('全キーワードレポートダウンロード');
-          console.log(`完了レポート: ${targets.join(', ')}`);
-          for (const name of targets) {
-            const clicked = await page.evaluate((target) => {
-              const links = Array.from(document.querySelectorAll('a'));
-              for (const link of links) {
-                if (link.textContent.trim() !== 'ダウンロード') continue;
-                const row = link.closest('tr') || link.parentElement?.parentElement;
-                if (!row) continue;
-                if (row.textContent.includes(target) && row.textContent.includes('完了')) {
-                  link.click();
-                  return true;
-                }
-              }
-              return false;
-            }, name);
-            console.log(`${name} ダウンロードクリック: ${clicked}`);
-            await new Promise(r => setTimeout(r, 3000));
-          }
+        if (allDone) {
+          await page.evaluate(() => {
+            for (const link of document.querySelectorAll('a')) {
+              if (link.textContent.trim() !== 'ダウンロード') continue;
+              const row = link.closest('tr') || link.parentElement?.parentElement;
+              if (row && row.textContent.includes('この条件でダウンロード') && row.textContent.includes('完了')) { link.click(); return; }
+            }
+          });
+          await new Promise(r => setTimeout(r, 3000));
           break;
         }
-
-        console.log(`レポート準備待ち... (${retry + 1}/6)`);
         await new Promise(r => setTimeout(r, 3000));
         await page.reload({ waitUntil: 'networkidle2' });
         await new Promise(r => setTimeout(r, 3000));
+      }
+
+      // 6b-6c: rpp_item_raw & rpp_kw_raw（日別取得）
+      // 「全期間で表示」で1日分の日付範囲を指定
+      const daysInMonth = [];
+      {
+        const mEnd = new Date(targetMonth.endStr + 'T00:00:00+0900');
+        const nowDate = new Date(); nowDate.setHours(0, 0, 0, 0);
+        for (let d = new Date(targetMonth.startStr + 'T00:00:00+0900'); d <= mEnd && d < nowDate; d.setDate(d.getDate() + 1)) {
+          daysInMonth.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        }
+      }
+      // 当月は直近3日のみ（日次cronの効率化）、過去月は全日
+      const isCurrentMonth = targetMonth.monthStr === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const daysToFetch = isCurrentMonth ? daysInMonth.slice(-3) : daysInMonth;
+      console.log(`rpp_item/kw日別: ${daysToFetch.length}日分 (${daysToFetch[0] || 'none'} 〜 ${daysToFetch[daysToFetch.length - 1] || 'none'})`);
+
+      for (const dayStr of daysToFetch) {
+        console.log(`Step 6b-c [${dayStr}]: rpp_item & rpp_kw ダウンロード...`);
+        const beforeLen = capturedDownloads.length;
+
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/reports', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        await setCheckboxes(page);
+
+        // 商品別 → 全期間 → 1日分
+        await page.evaluate(() => {
+          for (const id of ['#rdReportTypeItem', '#rdReportTypeProduct', '#rdReportTypeShohin']) {
+            const r = document.querySelector(id); if (r) { r.click(); return; }
+          }
+          for (const radio of document.querySelectorAll('input[type="radio"]')) {
+            if (radio.parentElement?.textContent?.includes('商品別')) { radio.click(); return; }
+          }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+        await page.evaluate(() => {
+          const r = document.querySelector('#rdPeriodAll') || document.querySelector('[id*="PeriodAll"]');
+          if (r) r.click();
+          else { for (const radio of document.querySelectorAll('input[type="radio"]')) { if (radio.parentElement?.textContent?.includes('全期間')) { radio.click(); return; } } }
+        });
+        await new Promise(r => setTimeout(r, 2000));
+        await setRppDateRange(page, dayStr, dayStr);
+        await clickButton(page, '全商品レポートダウンロード');
+
+        // キーワード別 → 全期間 → 1日分
+        await page.evaluate(() => {
+          for (const id of ['#rdReportTypeKeyword', '#rdReportTypeKw']) {
+            const r = document.querySelector(id); if (r) { r.click(); return; }
+          }
+          for (const radio of document.querySelectorAll('input[type="radio"]')) {
+            if (radio.parentElement?.textContent?.includes('キーワード別')) { radio.click(); return; }
+          }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+        await page.evaluate(() => {
+          const r = document.querySelector('#rdPeriodAll') || document.querySelector('[id*="PeriodAll"]');
+          if (r) r.click();
+          else { for (const radio of document.querySelectorAll('input[type="radio"]')) { if (radio.parentElement?.textContent?.includes('全期間')) { radio.click(); return; } } }
+        });
+        await new Promise(r => setTimeout(r, 2000));
+        await setRppDateRange(page, dayStr, dayStr);
+        await clickButton(page, '全キーワードレポートダウンロード');
+
+        // ダウンロード履歴でCSV取得
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        for (let retry = 0; retry < 8; retry++) {
+          const status = await page.evaluate(() => {
+            const t = document.body.innerText;
+            return {
+              item: t.includes('全商品レポートダウンロード') && t.includes('完了'),
+              kw: t.includes('全キーワードレポートダウンロード') && t.includes('完了'),
+            };
+          });
+          if (status.item && status.kw) {
+            for (const name of ['全商品レポートダウンロード', '全キーワードレポートダウンロード']) {
+              await page.evaluate((target) => {
+                for (const link of document.querySelectorAll('a')) {
+                  if (link.textContent.trim() !== 'ダウンロード') continue;
+                  const row = link.closest('tr') || link.parentElement?.parentElement;
+                  if (row && row.textContent.includes(target) && row.textContent.includes('完了')) { link.click(); return; }
+                }
+              }, name);
+              await new Promise(r => setTimeout(r, 2000));
+            }
+            break;
+          }
+          await new Promise(r => setTimeout(r, 3000));
+          await page.reload({ waitUntil: 'networkidle2' });
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // 新規ダウンロードにdateOverrideタグ付け
+        for (let i = beforeLen; i < capturedDownloads.length; i++) {
+          capturedDownloads[i].dateOverride = dayStr;
+        }
+        console.log(`[${dayStr}] キャプチャ: ${capturedDownloads.length - beforeLen}件`);
       }
     } // end targetMonths loop
 
@@ -2474,7 +2509,8 @@ async function processRppDownloads(downloads) {
       for (const entry of zip.getEntries()) {
         if (entry.entryName.endsWith('.csv')) {
           const utf8 = iconv.decode(entry.getData(), 'Shift_JIS');
-          const csvPath = path.join(DOWNLOAD_DIR, entry.entryName);
+          const prefix = dl.dateOverride ? `dt_${dl.dateOverride}_` : '';
+          const csvPath = path.join(DOWNLOAD_DIR, `${prefix}${entry.entryName}`);
           fs.writeFileSync(csvPath, utf8, 'utf-8');
           console.log(`ZIP展開→CSV: ${csvPath}`);
         }
@@ -2492,7 +2528,8 @@ async function processRppDownloads(downloads) {
         utf8 = asUtf8;
         console.log(`CSV保存(UTF-8そのまま): conv_${dl.fileName}`);
       }
-      fs.writeFileSync(path.join(DOWNLOAD_DIR, `conv_${dl.fileName}`), utf8, 'utf-8');
+      const prefix = dl.dateOverride ? `dt_${dl.dateOverride}_` : 'conv_';
+      fs.writeFileSync(path.join(DOWNLOAD_DIR, `${prefix}${dl.fileName}`), utf8, 'utf-8');
     }
   }
 
@@ -2539,6 +2576,12 @@ async function processRppDownloads(downloads) {
     const content = fs.readFileSync(csvFile, 'utf-8');
     const records = parseRakutenCsv(content);
     if (records.length === 0) continue;
+
+    // dateOverride: ファイル名に dt_YYYY-MM-DD_ プレフィックスがあれば日付を上書き
+    const dateMatch = fileName.match(/dt_(\d{4}-\d{2}-\d{2})_/);
+    if (dateMatch) {
+      records.forEach(r => { r['日付'] = dateMatch[1]; });
+    }
 
     let sheetName;
     if (fileName.includes('item') || fileName.includes('shohin')) {
@@ -3776,6 +3819,7 @@ async function fetchOrdersFromRmsApi(query) {
   // フラット化: 注文×商品行
   const flatRows = [];
   allOrders.forEach(order => {
+    const couponModel = order.CouponModelList?.[0] || {};
     const base = {
       orderNumber: order.orderNumber || '',
       orderDatetime: order.orderDatetime || '',
@@ -3789,6 +3833,12 @@ async function fetchOrdersFromRmsApi(query) {
       postagePrice: order.postagePrice || 0,
       deliveryPrice: order.deliveryPrice || 0,
       totalCouponDiscount: order.totalCouponDiscount || 0,
+      couponCode: couponModel.couponCode || '',
+      couponTotalDiscount: couponModel.couponTotalDiscount || 0,
+      goodsCouponDiscount: couponModel.goodsCouponDiscount || 0,
+      deliveryCouponDiscount: couponModel.deliveryCouponDiscount || 0,
+      usedPoint: order.usedPoint || 0,
+      dealFlag: String(order.dealFlag || '0'),
       ordererEmailAddress: order.OrdererModel?.emailAddress || '',
       ordererPrefecture: order.OrdererModel?.prefecture || '',
       ordererSex: order.OrdererModel?.sex || '',
@@ -3804,8 +3854,10 @@ async function fetchOrdersFromRmsApi(query) {
           itemNumber: item.itemNumber || '',
           manageNumber: item.manageNumber || '',
           units: item.units || 1,
-          goodsPrice: item.price || base.goodsPrice,
+          price: item.price || base.goodsPrice,
           itemId: item.itemId || '',
+          pointRate: item.pointRate || 1,
+          pointType: item.pointType || '',
         });
       });
     }
@@ -4069,6 +4121,17 @@ async function generateDashboardHtml() {
     console.log(`Dashboard order_raw sample email: ${sample.ordererEmailAddress || sample['メールアドレス'] || 'NONE'}`);
   }
 
+  // BigQueryからクーポンマスタデータを取得
+  let couponMasterRows = [];
+  try {
+    const bigquery = new BigQuery({ projectId: 'stellar-shape-491201-g8' });
+    const [rows] = await bigquery.query({ query: 'SELECT * FROM `stellar-shape-491201-g8.rakuten.coupons`', location: 'asia-northeast1' });
+    couponMasterRows = rows || [];
+    console.log(`Dashboard: ${couponMasterRows.length} coupon master rows from BigQuery`);
+  } catch (e) {
+    console.log(`Dashboard: coupons table read error: ${e.message?.substring(0, 100)}`);
+  }
+
   // ── 日付パース ──
   const now = new Date();
   const dateStr = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -4132,6 +4195,7 @@ async function generateDashboardHtml() {
   const rppSalesKey = rppAllH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppAllH.find(h => h && h.includes('売上金額')) || '売上金額';
   const rppClicksKey = rppAllH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppAllH.find(h => h && h.includes('クリック数')) || 'クリック数';
   const rppOrdersKey = rppAllH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppAllH.find(h => h && h.includes('売上件数')) || '売上件数';
+  const rppCtrKey = rppAllH.find(h => h && h.includes('CTR')) || 'CTR(%)';
 
   // TDA column matching
   const tdaH = tdaRaw.headers;
@@ -4158,6 +4222,7 @@ async function generateDashboardHtml() {
   const rppItemSalesKey = rppItemH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppItemH.find(h => h && h.includes('売上金額')) || '売上金額';
   const rppItemClicksKey = rppItemH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppItemH.find(h => h && h.includes('クリック数') && !h.includes('新規') && !h.includes('既存')) || 'クリック数';
   const rppItemOrdersKey = rppItemH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppItemH.find(h => h && h.includes('売上件数')) || '売上件数';
+  const rppItemCtrKey = rppItemH.find(h => h && h.includes('CTR')) || 'CTR(%)';
 
   // RPP kw column matching
   const rppKwH = rppKwRaw.headers;
@@ -4165,6 +4230,7 @@ async function generateDashboardHtml() {
   const rppKwSalesKey = rppKwH.find(h => h && h.includes('売上金額') && h.includes('720')) || rppKwH.find(h => h && h.includes('売上金額')) || '売上金額';
   const rppKwClicksKey = rppKwH.find(h => h && (h === 'クリック数(合計)' || h === 'クリック数')) || rppKwH.find(h => h && h.includes('クリック数') && !h.includes('新規') && !h.includes('既存')) || 'クリック数';
   const rppKwOrdersKey = rppKwH.find(h => h && h.includes('売上件数') && h.includes('720')) || rppKwH.find(h => h && h.includes('売上件数')) || '売上件数';
+  const rppKwCtrKey = rppKwH.find(h => h && h.includes('CTR')) || 'CTR(%)';
 
   // ── Build structured data for JSON embedding ──
   // all_raw - filter デバイス=すべて
@@ -4218,6 +4284,7 @@ async function generateDashboardHtml() {
       sales: num(r[rppSalesKey]),
       clicks: num(r[rppClicksKey]),
       orders: num(r[rppOrdersKey]),
+      ctr: num(r[rppCtrKey]),
     };
     const dedupKey = ym + '|' + dateKey;
     if (dateKey && rppDateSeen[dedupKey] !== undefined) {
@@ -4243,8 +4310,9 @@ async function generateDashboardHtml() {
       sales: num(r[rppItemSalesKey]),
       clicks: num(r[rppItemClicksKey]),
       orders: num(r[rppItemOrdersKey]),
+      ctr: num(r[rppItemCtrKey]),
     };
-    const dedupKey = ym + '|' + row.manageNum;
+    const dedupKey = ym + '|' + row.date + '|' + row.manageNum;
     if (rppItemSeen[dedupKey] !== undefined) {
       rppItemByMonth[ym][rppItemSeen[dedupKey]] = row;
     } else {
@@ -4268,8 +4336,9 @@ async function generateDashboardHtml() {
       sales: num(r[rppKwSalesKey]),
       clicks: num(r[rppKwClicksKey]),
       orders: num(r[rppKwOrdersKey]),
+      ctr: num(r[rppKwCtrKey]),
     };
-    const dedupKey = ym + '|' + (r['商品管理番号'] || '') + '|' + (r['キーワード'] || '');
+    const dedupKey = ym + '|' + row.date + '|' + (r['商品管理番号'] || '') + '|' + (r['キーワード'] || '');
     if (rppKwSeen[dedupKey] !== undefined) {
       rppKwByMonth[ym][rppKwSeen[dedupKey]] = row;
     } else {
@@ -4428,8 +4497,13 @@ async function generateDashboardHtml() {
     const manageNum = r['manageNumber'] || r['商品管理番号'] || '';
     const pref = r['ordererPrefecture'] || r['都道府県'] || '';
     const sex = r['ordererSex'] || '';
-    const couponDiscount = num(r['totalCouponDiscount'] || 0);
-    orders.push({ email, orderNum, date: dateRaw, price, itemName, units, manageNum, pref, sex, couponDiscount });
+    const couponDiscount = num(r['totalCouponDiscount'] || r['couponTotalDiscount'] || 0);
+    const pointRate = num(r['pointRate'] || 0);
+    const usedPoint = num(r['usedPoint'] || 0);
+    const dealFlag = String(r['dealFlag'] || '0');
+    const couponCode = r['couponCode'] || '';
+    const itemPrice = num(r['price'] || r['goodsPrice'] || 0);
+    orders.push({ email, orderNum, date: dateRaw, price, itemName, units, manageNum, pref, sex, couponDiscount, pointRate, usedPoint, dealFlag, couponCode, itemPrice });
   });
 
   // Customer purchase history
@@ -4620,6 +4694,157 @@ async function generateDashboardHtml() {
   });
   const basketProducts = [...productList].sort();
 
+  // ── 販促分析データ ──
+
+  // クーポンマスタ（BigQuery coupons テーブル）
+  const couponMaster = couponMasterRows.map(c => ({
+    code: c.couponCode || '',
+    name: c.couponName || '',
+    type: c.couponType || '',
+    discountType: c.discountType || '',
+    discountValue: Number(c.discountValue) || 0,
+    startDate: c.startDate || '',
+    endDate: c.endDate || '',
+    status: c.status || '',
+    issueCount: Number(c.issueCount) || 0,
+    getCount: Number(c.getCount) || 0,
+    availCount: Number(c.availCount) || 0,
+  }));
+  const couponByName = {};
+  couponMaster.forEach(c => {
+    if (!couponByName[c.name]) couponByName[c.name] = { name: c.name, discountType: c.discountType, discountValue: c.discountValue, codes: [], totalIssued: 0, totalGet: 0, totalUsed: 0, startDate: c.startDate, endDate: c.endDate };
+    couponByName[c.name].codes.push(c.code);
+    couponByName[c.name].totalIssued += c.issueCount;
+    couponByName[c.name].totalGet += c.getCount;
+    couponByName[c.name].totalUsed += c.availCount;
+  });
+  const couponSummaryRows = Object.values(couponByName)
+    .map(c => {
+      const sd = c.startDate ? c.startDate.substring(0, 10) : '';
+      const ed = c.endDate ? c.endDate.substring(0, 10) : '';
+      const startYM = sd ? sd.substring(0, 7) : '';
+      const now = new Date();
+      const isActive = ed ? new Date(ed) > now : false;
+      return { ...c, startDateStr: sd, endDateStr: ed, startYM, codeCount: c.codes.length, isActive };
+    })
+    .sort((a, b) => (b.startDateStr || '').localeCompare(a.startDateStr || ''));
+
+  // クーポンAPI月別集計（startDate基準で月ごとの獲得数をまとめる）
+  const couponGetByMonth = {};
+  couponSummaryRows.forEach(c => {
+    if (!c.startYM) return;
+    if (!couponGetByMonth[c.startYM]) couponGetByMonth[c.startYM] = { count: 0, totalGet: 0, totalUsed: 0 };
+    couponGetByMonth[c.startYM].count++;
+    couponGetByMonth[c.startYM].totalGet += c.totalGet;
+    couponGetByMonth[c.startYM].totalUsed += c.totalUsed;
+  });
+  const couponGetMonthlyData = Object.entries(couponGetByMonth)
+    .map(([ym, v]) => ({ month: ym, couponCount: v.count, totalGet: v.totalGet, totalUsed: v.totalUsed, useRate: v.totalGet > 0 ? Math.round(v.totalUsed / v.totalGet * 1000) / 10 : 0 }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  // 注文データからのクーポン利用分析（couponCode + couponTotalDiscount）
+  const couponOrdersByMonth = {};
+  const couponOrdersByCode = {};
+  orders.forEach(r => {
+    if (!r.couponCode && r.couponDiscount <= 0) return;
+    const ym = toYM(r.date);
+    if (!ym) return;
+    if (!couponOrdersByMonth[ym]) couponOrdersByMonth[ym] = { orders: new Set(), discount: 0 };
+    couponOrdersByMonth[ym].orders.add(r.orderNum);
+    couponOrdersByMonth[ym].discount += r.couponDiscount;
+    if (r.couponCode) {
+      if (!couponOrdersByCode[r.couponCode]) couponOrdersByCode[r.couponCode] = { code: r.couponCode, orders: new Set(), discount: 0 };
+      couponOrdersByCode[r.couponCode].orders.add(r.orderNum);
+      couponOrdersByCode[r.couponCode].discount += r.couponDiscount;
+    }
+  });
+  const couponMonthlyData = Object.entries(couponOrdersByMonth)
+    .map(([ym, v]) => ({ month: ym, orders: v.orders.size, discount: Math.round(v.discount) }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  // ポイント倍率分析（pointRate by month & product）
+  const pointRateByMonth = {};
+  const pointRateByProduct = {};
+  orders.forEach(r => {
+    if (!r.pointRate || r.pointRate <= 0) return;
+    const ym = toYM(r.date);
+    if (!ym) return;
+    const rateKey = String(r.pointRate) + '倍';
+    const mn = r.manageNum || r.itemName || '不明';
+    const sales = r.itemPrice * r.units || r.price;
+    if (!pointRateByMonth[ym]) pointRateByMonth[ym] = {};
+    if (!pointRateByMonth[ym][rateKey]) pointRateByMonth[ym][rateKey] = { count: 0, sales: 0 };
+    pointRateByMonth[ym][rateKey].count++;
+    pointRateByMonth[ym][rateKey].sales += sales;
+    if (r.pointRate > 1) {
+      if (!pointRateByProduct[mn]) pointRateByProduct[mn] = {};
+      if (!pointRateByProduct[mn][rateKey]) pointRateByProduct[mn][rateKey] = { count: 0, sales: 0 };
+      pointRateByProduct[mn][rateKey].count++;
+      pointRateByProduct[mn][rateKey].sales += sales;
+    }
+  });
+  const pointRateMonthlyData = Object.entries(pointRateByMonth)
+    .map(([ym, rates]) => ({ month: ym, rates: Object.entries(rates).map(([r, v]) => ({ rate: r, count: v.count, sales: Math.round(v.sales) })).sort((a, b) => b.count - a.count) }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+  const pointRateProductData = Object.entries(pointRateByProduct)
+    .map(([mn, rates]) => ({ product: mn, productName: masterProducts[mn] || mn, rates: Object.entries(rates).map(([r, v]) => ({ rate: r, count: v.count, sales: Math.round(v.sales) })) }))
+    .sort((a, b) => {
+      const aTot = a.rates.reduce((s, r) => s + r.count, 0);
+      const bTot = b.rates.reduce((s, r) => s + r.count, 0);
+      return bTot - aTot;
+    }).slice(0, 30);
+
+  // ポイント利用分析（usedPoint）
+  const pointUsageByMonth = {};
+  const orderSeenForPoint = {};
+  orders.forEach(r => {
+    if (!r.usedPoint || r.usedPoint <= 0) return;
+    if (orderSeenForPoint[r.orderNum]) return;
+    orderSeenForPoint[r.orderNum] = true;
+    const ym = toYM(r.date);
+    if (!ym) return;
+    if (!pointUsageByMonth[ym]) pointUsageByMonth[ym] = { orders: 0, totalPoints: 0 };
+    pointUsageByMonth[ym].orders++;
+    pointUsageByMonth[ym].totalPoints += r.usedPoint;
+  });
+  const pointUsageMonthlyData = Object.entries(pointUsageByMonth)
+    .map(([ym, v]) => ({ month: ym, orders: v.orders, totalPoints: Math.round(v.totalPoints), avgPoints: v.orders > 0 ? Math.round(v.totalPoints / v.orders) : 0 }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  // DEAL分析（dealFlag）
+  const dealByMonth = {};
+  const dealOrderSeen = {};
+  orders.forEach(r => {
+    const ym = toYM(r.date);
+    if (!ym) return;
+    if (dealOrderSeen[r.orderNum]) return;
+    dealOrderSeen[r.orderNum] = true;
+    if (!dealByMonth[ym]) dealByMonth[ym] = { dealOrders: 0, normalOrders: 0, dealSales: 0, normalSales: 0 };
+    if (r.dealFlag === '1') {
+      dealByMonth[ym].dealOrders++;
+      dealByMonth[ym].dealSales += r.price;
+    } else {
+      dealByMonth[ym].normalOrders++;
+      dealByMonth[ym].normalSales += r.price;
+    }
+  });
+  const dealMonthlyData = Object.entries(dealByMonth)
+    .map(([ym, v]) => ({ month: ym, dealOrders: v.dealOrders, normalOrders: v.normalOrders, dealSales: Math.round(v.dealSales), normalSales: Math.round(v.normalSales), dealRate: (v.dealOrders + v.normalOrders) > 0 ? Math.round(v.dealOrders / (v.dealOrders + v.normalOrders) * 1000) / 10 : 0 }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  // all_rawからのクーポン値引額分析
+  const couponDiscountByMonth = {};
+  allData.forEach(r => {
+    const ym = toYM(r['日付']);
+    if (!ym) return;
+    if (!couponDiscountByMonth[ym]) couponDiscountByMonth[ym] = { shop: 0, rakuten: 0 };
+    couponDiscountByMonth[ym].shop += num(r['クーポン値引額（店舗）']);
+    couponDiscountByMonth[ym].rakuten += num(r['クーポン値引額（楽天）']);
+  });
+  const couponDiscountMonthly = Object.entries(couponDiscountByMonth)
+    .map(([ym, v]) => ({ month: ym, shopDiscount: Math.round(v.shop), rakutenDiscount: Math.round(v.rakuten), total: Math.round(v.shop + v.rakuten) }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
   // Mail data - parse with proper columns
   // mail_raw columns: 年月, 区分, デバイス, メール種別, 保有数, 配信回数, 送信数, 開封数, 開封率(%), 送客数, 送客率(%), クリック数, お気に入り登録数, お気に入り登録率(%), 転換数, 転換率(%), 売上, 売上/通
   const mailH = mailRaw.headers;
@@ -4792,6 +5017,16 @@ async function generateDashboardHtml() {
     mailParsed,
     afiByRateRows,
     rakutenEvents,
+    promoAnalysis: {
+      couponSummary: couponSummaryRows,
+      couponGetMonthly: couponGetMonthlyData,
+      couponMonthly: couponMonthlyData,
+      couponDiscountMonthly,
+      pointRateMonthly: pointRateMonthlyData,
+      pointRateByProduct: pointRateProductData,
+      pointUsageMonthly: pointUsageMonthlyData,
+      dealMonthly: dealMonthlyData,
+    },
     shareForecast: shareForecastRaw.data.map(r => {
       const raw = String(r['日程'] || '').replace(/\//g, '-');
       const m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -5036,6 +5271,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <div class="main-tab active" data-tab="tab-sales">売上サマリ</div>
     <div class="main-tab" data-tab="tab-product">商品別分析</div>
     <div class="main-tab" data-tab="tab-ads">広告分析</div>
+    <div class="main-tab" data-tab="tab-promo">販促分析</div>
     <div class="main-tab" data-tab="tab-acq">CRM分析</div>
     <div class="main-tab" data-tab="tab-customer">顧客分析</div>
   </div>
@@ -5162,7 +5398,84 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
 </div>
 
-<!-- Tab 3: CRM分析 -->
+<!-- Tab: 販促分析 -->
+<div class="tab-panel" id="tab-promo">
+  <div class="panel-title">販促分析</div>
+  <div class="section-box">
+    <div class="sub-tabs" id="promoSubTabs">
+      <div class="sub-tab active" data-subtab="promo-coupon">クーポン</div>
+      <div class="sub-tab" data-subtab="promo-point">ポイント</div>
+      <div class="sub-tab" data-subtab="promo-deal">DEAL</div>
+    </div>
+    <div class="sub-panel active" id="promo-coupon">
+      <div id="couponKpiRow" class="kpi-row"></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="section-box">
+          <div class="section-title">月別クーポン獲得数推移</div>
+          <div class="chart-wrap chart-md"><canvas id="chartCouponGetTrend"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">月別クーポン値引額推移</div>
+          <div class="chart-wrap chart-md"><canvas id="chartCouponTrend"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">クーポン一覧（Coupon API）</div>
+        <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <span class="filter-label">月フィルタ</span>
+          <select id="couponMonthFilter" class="filter-select" style="width:auto">
+            <option value="">全期間</option>
+          </select>
+          <span class="filter-label" style="margin-left:8px">ステータス</span>
+          <select id="couponStatusFilter" class="filter-select" style="width:auto">
+            <option value="">すべて</option>
+            <option value="active">有効</option>
+            <option value="ended">終了</option>
+          </select>
+        </div>
+        <div id="couponMasterTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:600px"></div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">クーポン別 獲得数ランキング</div>
+        <div class="chart-wrap chart-md"><canvas id="chartCouponRanking"></canvas></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="promo-point">
+      <div id="pointKpiRow" class="kpi-row"></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="section-box">
+          <div class="section-title">月別ポイント倍率分布</div>
+          <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">月別ポイント利用額</div>
+          <div class="chart-wrap chart-md"><canvas id="chartPointUsageTrend"></canvas></div>
+        </div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">ポイント倍率別 月別件数</div>
+        <div id="pointRateMonthlyTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">ポイント倍率UP商品（2倍以上）</div>
+        <div id="pointRateProductTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
+      </div>
+    </div>
+    <div class="sub-panel" id="promo-deal">
+      <div id="dealKpiRow" class="kpi-row"></div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">月別DEAL注文推移</div>
+        <div class="chart-wrap chart-md"><canvas id="chartDealTrend"></canvas></div>
+      </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">月別DEAL実績</div>
+        <div id="dealMonthlyTableWrap"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: CRM分析 -->
 <div class="tab-panel" id="tab-acq">
   <div class="panel-title">CRM分析</div>
   <div class="section-box">
@@ -5188,7 +5501,7 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
   </div>
 </div>
 
-<!-- Tab 4: 顧客分析 -->
+<!-- Tab: 顧客分析 -->
 <div class="tab-panel" id="tab-customer">
   <div class="panel-title">顧客分析</div>
   <div class="section-box">
@@ -5358,6 +5671,9 @@ const safe = s => {
   d.textContent = String(s||'');
   return d.innerHTML;
 };
+
+const el = id => document.getElementById(id);
+const kpiCard = (label, value, change, sub) => '<div class="metric-card"><div class="metric-label">' + label + '</div><div class="metric-value">' + value + '</div>' + (change ? '<div style="font-size:12px;color:#888">' + change + '</div>' : '') + (sub ? '<div style="font-size:11px;color:#888;margin-top:2px">' + sub + '</div>' : '') + '</div>';
 
 // ── State ──
 let currentMonth = 'all';
@@ -6204,41 +6520,61 @@ function renderAdsTab() {
   const rppRoas = rppSpend > 0 ? (rppSales / rppSpend * 100) : 0;
   const rppCpc = rppClicks > 0 ? rppSpend / rppClicks : 0;
 
-  const makeRow = (label, spend, sales, clicks, orders, ratio) => {
+  // CTR算出: impressions = clicks / (ctr/100)
+  function calcCtrFromData(data) {
+    let totalImps = 0;
+    let totalClicks = 0;
+    data.forEach(r => {
+      totalClicks += r.clicks || 0;
+      if (r.ctr > 0) totalImps += r.clicks / (r.ctr / 100);
+    });
+    return totalImps > 0 ? (totalClicks / totalImps * 100) : 0;
+  }
+  const rppAllCtr = calcCtrFromData(rppData);
+  const rppKwCtr = calcCtrFromData(rppKwData);
+  const rppItemOnlyImps = rppData.reduce((s, r) => s + (r.ctr > 0 ? r.clicks / (r.ctr / 100) : 0), 0) - rppKwData.reduce((s, r) => s + (r.ctr > 0 ? r.clicks / (r.ctr / 100) : 0), 0);
+  const rppItemOnlyCtr = rppItemOnlyImps > 0 ? (rppItemOnlyClicks / rppItemOnlyImps * 100) : 0;
+
+  const makeRow = (label, spend, sales, clicks, orders, ratio, ctrVal) => {
     const roas = spend > 0 ? (sales / spend * 100).toFixed(0) : 0;
     const cvr = clicks > 0 ? (orders / clicks * 100).toFixed(2) : '0.00';
     const cpc = clicks > 0 ? Math.round(spend / clicks) : 0;
     const ratioStr = ratio !== null ? ratio.toFixed(1) + '%' : '-';
-    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + ratioStr + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
+    const ctrStr = ctrVal > 0 ? ctrVal.toFixed(2) + '%' : '-';
+    return '<tr><td style="text-align:left;font-weight:600">' + label + '</td><td>' + yen(spend) + '</td><td>' + ratioStr + '</td><td>' + yen(sales) + '</td><td>' + comma(clicks) + '</td><td>' + comma(orders) + '</td><td>' + ctrStr + '</td><td>' + yen(cpc) + '</td><td>' + cvr + '%</td><td>' + roas + '%</td></tr>';
   };
   const itemRatio = rppSpend > 0 ? (rppItemOnlySpend / rppSpend * 100) : 0;
   const kwRatio = rppSpend > 0 ? (rppKwSpendTotal / rppSpend * 100) : 0;
   document.getElementById('rppKpiRow').innerHTML =
-    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:9%"><col style="width:13%"><col style="width:8%"><col style="width:15%"><col style="width:11%"><col style="width:9%"><col style="width:9%"><col style="width:9%"><col style="width:12%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>費用比率</th><th>売上</th><th>クリック</th><th>件数</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
-    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders, null) +
-    makeRow('商品入札', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio) +
-    makeRow('KW入札', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio) +
+    '<div class="table-wrap"><table style="table-layout:fixed;width:100%"><colgroup><col style="width:8%"><col style="width:12%"><col style="width:7%"><col style="width:13%"><col style="width:10%"><col style="width:8%"><col style="width:7%"><col style="width:8%"><col style="width:8%"><col style="width:10%"></colgroup><thead><tr><th style="text-align:left">区分</th><th>費用</th><th>費用比率</th><th>売上</th><th>クリック</th><th>件数</th><th>CTR</th><th>CPC</th><th>CVR</th><th>ROAS</th></tr></thead><tbody>' +
+    makeRow('全体', rppSpend, rppSales, rppClicks, rppOrders, null, rppAllCtr) +
+    makeRow('商品入札', rppItemOnlySpend, rppItemOnlySales, rppItemOnlyClicks, rppItemOnlyOrders, itemRatio, rppItemOnlyCtr) +
+    makeRow('KW入札', rppKwSpendTotal, rppKwSalesTotal, rppKwClicksTotal, rppKwOrdersTotal, kwRatio, rppKwCtr) +
     '</tbody></table></div>';
 
   // RPP Item table
   const rppItemAgg = {};
   rppItemData.forEach(r => {
     const k = r.name;
-    if (!rppItemAgg[k]) rppItemAgg[k] = { name: k, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    if (!rppItemAgg[k]) rppItemAgg[k] = { name: k, spend: 0, sales: 0, clicks: 0, orders: 0, imps: 0 };
     rppItemAgg[k].spend += r.spend; rppItemAgg[k].sales += r.sales;
     rppItemAgg[k].clicks += r.clicks; rppItemAgg[k].orders += r.orders;
+    if (r.ctr > 0) rppItemAgg[k].imps += r.clicks / (r.ctr / 100);
   });
   const rppItems = Object.values(rppItemAgg).map(r => ({
     ...r,
     roas: r.spend > 0 ? Math.round(r.sales / r.spend * 100) : 0,
     cvr: r.clicks > 0 ? Math.round(r.orders / r.clicks * 10000) / 100 : 0,
     cpc: r.clicks > 0 ? Math.round(r.spend / r.clicks) : 0,
+    ctr: r.imps > 0 ? Math.round(r.clicks / r.imps * 10000) / 100 : 0,
   })).sort((a, b) => b.sales - a.sales);
   buildTable('rppItemTableWrap', [
     { key: 'name', label: '商品名', fmt: v => safe(String(v).substring(0, 50)) },
     { key: 'spend', label: '費用', fmt: v => yen(v) },
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
+    { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'ctr', label: 'CTR', fmt: v => v > 0 ? pct(v) : '-' },
     { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
     { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
@@ -6248,34 +6584,37 @@ function renderAdsTab() {
   const rppKwByProd = {};
   rppKwData.forEach(r => {
     const prod = r.name || r.manageNum || '不明';
-    if (!rppKwByProd[prod]) rppKwByProd[prod] = { name: prod, totalSpend: 0, totalSales: 0, totalClicks: 0, totalOrders: 0, kws: {} };
+    if (!rppKwByProd[prod]) rppKwByProd[prod] = { name: prod, totalSpend: 0, totalSales: 0, totalClicks: 0, totalOrders: 0, totalImps: 0, kws: {} };
     rppKwByProd[prod].totalSpend += r.spend; rppKwByProd[prod].totalSales += r.sales;
     rppKwByProd[prod].totalClicks += r.clicks; rppKwByProd[prod].totalOrders += r.orders;
+    if (r.ctr > 0) rppKwByProd[prod].totalImps += r.clicks / (r.ctr / 100);
     const kw = r.kw || '不明';
-    if (!rppKwByProd[prod].kws[kw]) rppKwByProd[prod].kws[kw] = { kw, spend: 0, sales: 0, clicks: 0, orders: 0 };
+    if (!rppKwByProd[prod].kws[kw]) rppKwByProd[prod].kws[kw] = { kw, spend: 0, sales: 0, clicks: 0, orders: 0, imps: 0 };
     rppKwByProd[prod].kws[kw].spend += r.spend; rppKwByProd[prod].kws[kw].sales += r.sales;
     rppKwByProd[prod].kws[kw].clicks += r.clicks; rppKwByProd[prod].kws[kw].orders += r.orders;
+    if (r.ctr > 0) rppKwByProd[prod].kws[kw].imps += r.clicks / (r.ctr / 100);
   });
   const rppKwRows = [];
   Object.values(rppKwByProd).sort((a, b) => b.totalSpend - a.totalSpend).forEach(prod => {
-    // Product header row
+    const prodCtr = prod.totalImps > 0 ? Math.round(prod.totalClicks / prod.totalImps * 10000) / 100 : 0;
     rppKwRows.push({ isHeader: true, name: prod.name, kw: '', spend: prod.totalSpend, sales: prod.totalSales, clicks: prod.totalClicks, orders: prod.totalOrders,
       roas: prod.totalSpend > 0 ? Math.round(prod.totalSales / prod.totalSpend * 100) : 0,
       cvr: prod.totalClicks > 0 ? Math.round(prod.totalOrders / prod.totalClicks * 10000) / 100 : 0,
-      cpc: prod.totalClicks > 0 ? Math.round(prod.totalSpend / prod.totalClicks) : 0 });
-    // KW rows sorted by spend
+      cpc: prod.totalClicks > 0 ? Math.round(prod.totalSpend / prod.totalClicks) : 0,
+      ctr: prodCtr });
     Object.values(prod.kws).sort((a, b) => b.spend - a.spend).forEach(kw => {
+      const kwCtr = kw.imps > 0 ? Math.round(kw.clicks / kw.imps * 10000) / 100 : 0;
       rppKwRows.push({ isHeader: false, name: '', kw: kw.kw, spend: kw.spend, sales: kw.sales, clicks: kw.clicks, orders: kw.orders,
         roas: kw.spend > 0 ? Math.round(kw.sales / kw.spend * 100) : 0,
         cvr: kw.clicks > 0 ? Math.round(kw.orders / kw.clicks * 10000) / 100 : 0,
-        cpc: kw.clicks > 0 ? Math.round(kw.spend / kw.clicks) : 0 });
+        cpc: kw.clicks > 0 ? Math.round(kw.spend / kw.clicks) : 0,
+        ctr: kwCtr });
     });
   });
-  // KW table with sortable columns
   const kwFlatRows = rppKwRows.map(r => ({
     label: r.isHeader ? r.name : '　' + r.kw,
     spend: r.spend, sales: r.sales, clicks: r.clicks, orders: r.orders,
-    cpc: r.cpc, cvr: r.cvr, roas: r.roas, _isHeader: r.isHeader,
+    cpc: r.cpc, ctr: r.ctr, cvr: r.cvr, roas: r.roas, _isHeader: r.isHeader,
   }));
   buildTable('rppKwTableWrap', [
     { key: 'label', label: '商品 / キーワード', fmt: (v, row) => row._isHeader ? '<b>' + safe(String(v).substring(0, 45)) + '</b>' : '<span style="padding-left:16px;color:#555">' + safe(v) + '</span>' },
@@ -6283,6 +6622,7 @@ function renderAdsTab() {
     { key: 'sales', label: '売上', fmt: v => yen(v) },
     { key: 'clicks', label: 'クリック', fmt: v => comma(v) },
     { key: 'orders', label: '件数', fmt: v => comma(v) },
+    { key: 'ctr', label: 'CTR', fmt: v => v > 0 ? pct(v) : '-' },
     { key: 'cpc', label: 'CPC', fmt: v => yen(v) },
     { key: 'cvr', label: 'CVR', fmt: v => pct(v) },
     { key: 'roas', label: 'ROAS', fmt: v => v + '%' },
@@ -7283,12 +7623,189 @@ function renderTimingTab() {
   }
 }
 
+// ── 販促分析 ──
+let chartCouponTrend, chartCouponGetTrend, chartCouponRanking, chartPointRateTrend, chartPointUsageTrend, chartDealTrend;
+function renderPromoTab() {
+  const promo = D.promoAnalysis;
+  if (!promo) return;
+
+  // ── クーポン（Coupon API データ中心） ──
+  const couponMasterList = promo.couponSummary || [];
+  const cgm = promo.couponGetMonthly || [];
+  const cdm = promo.couponDiscountMonthly || [];
+  const totalGetCount = couponMasterList.reduce((s, c) => s + (c.totalGet || 0), 0);
+  const activeCoupons = couponMasterList.filter(c => c.isActive).length;
+  const totalUsedCount = couponMasterList.reduce((s, c) => s + (c.totalUsed || 0), 0);
+  const totalUseRate = totalGetCount > 0 ? Math.round(totalUsedCount / totalGetCount * 1000) / 10 : 0;
+  const totalShopDiscount = cdm.reduce((s, r) => s + r.shopDiscount, 0);
+
+  el('couponKpiRow').innerHTML = kpiCard('クーポン獲得数', comma(totalGetCount), '', 'Coupon API累計') + kpiCard('利用数', comma(totalUsedCount), '', '利用率 ' + totalUseRate + '%') + kpiCard('有効クーポン', comma(activeCoupons) + '種', '', '/' + comma(couponMasterList.length) + '種') + kpiCard('クーポン値引額', yen(totalShopDiscount), '', 'EC分析累計');
+
+  // 月別クーポン獲得数チャート（Coupon API）
+  destroyChart('chartCouponGetTrend');
+  if (cgm.length > 0) {
+    chartInstances['chartCouponGetTrend'] = new Chart(el('chartCouponGetTrend'), {
+      type: 'bar', data: {
+        labels: cgm.map(r => D.monthLabels[r.month] || r.month),
+        datasets: [
+          { label: '獲得数', data: cgm.map(r => r.totalGet), backgroundColor: 'rgba(39,174,96,0.7)', yAxisID: 'y' },
+          { label: '利用数', data: cgm.map(r => r.totalUsed), backgroundColor: 'rgba(26,58,92,0.5)', yAxisID: 'y' },
+          { label: '利用率(%)', data: cgm.map(r => r.useRate), type: 'line', borderColor: '#e74c3c', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+        ]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { y: { beginAtZero: true, position: 'left', title: { display: true, text: '件数' } }, y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: '利用率' } } } }
+    });
+  }
+
+  // 月別クーポン値引額チャート（EC分析データ）
+  destroyChart('chartCouponTrend');
+  if (cdm.length > 0) {
+    chartInstances['chartCouponTrend'] = new Chart(el('chartCouponTrend'), {
+      type: 'bar', data: {
+        labels: cdm.map(r => D.monthLabels[r.month] || r.month),
+        datasets: [
+          { label: '店舗クーポン', data: cdm.map(r => r.shopDiscount), backgroundColor: 'rgba(26,58,92,0.7)' },
+          { label: '楽天クーポン', data: cdm.map(r => r.rakutenDiscount), backgroundColor: 'rgba(230,126,34,0.7)' },
+        ]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: v => '¥' + Number(v).toLocaleString() } } } }
+    });
+  }
+
+  // クーポン一覧（Coupon API）
+  const couponMonthSelect = el('couponMonthFilter');
+  const couponStatusSelect = el('couponStatusFilter');
+  if (couponMonthSelect.options.length <= 1) {
+    const couponMonths = [...new Set(couponMasterList.map(c => c.startYM).filter(Boolean))].sort().reverse();
+    couponMonths.forEach(ym => {
+      const opt = document.createElement('option');
+      opt.value = ym; opt.textContent = D.monthLabels[ym] || ym;
+      couponMonthSelect.appendChild(opt);
+    });
+  }
+  const filterYM = couponMonthSelect.value;
+  const filterStatus = couponStatusSelect.value;
+  let filteredCoupons = couponMasterList;
+  if (filterYM) filteredCoupons = filteredCoupons.filter(c => c.startYM === filterYM);
+  if (filterStatus === 'active') filteredCoupons = filteredCoupons.filter(c => c.isActive);
+  if (filterStatus === 'ended') filteredCoupons = filteredCoupons.filter(c => !c.isActive);
+
+  el('couponMasterTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>クーポン名</th><th>割引</th><th>状態</th><th>開始日</th><th>終了日</th><th>獲得数</th><th>利用数</th><th>利用率</th></tr></thead><tbody>' +
+    filteredCoupons.map(c => {
+      const discountLabel = c.discountType === '1' ? yen(c.discountValue) + ' OFF' : c.discountType === '2' ? c.discountValue + '% OFF' : '-';
+      const statusLabel = c.isActive ? '<span style="color:#27ae60;font-weight:600">有効</span>' : '<span style="color:#95a5a6">終了</span>';
+      const getStyle = c.totalGet > 0 ? 'font-weight:600' : '';
+      const useRate = c.totalGet > 0 ? Math.round(c.totalUsed / c.totalGet * 1000) / 10 : 0;
+      return '<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + safe(c.name) + '">' + safe(c.name) + '</td><td>' + discountLabel + '</td><td>' + statusLabel + '</td><td>' + safe(c.startDateStr) + '</td><td>' + safe(c.endDateStr) + '</td><td style="' + getStyle + '">' + comma(c.totalGet) + '</td><td>' + comma(c.totalUsed) + '</td><td>' + useRate + '%</td></tr>';
+    }).join('') + '</tbody></table>';
+
+  // クーポン別獲得数ランキング（横棒チャート Top15）
+  destroyChart('chartCouponRanking');
+  const top15 = [...couponMasterList].sort((a, b) => (b.totalGet || 0) - (a.totalGet || 0)).slice(0, 15).reverse();
+  if (top15.length > 0 && top15[top15.length - 1].totalGet > 0) {
+    chartInstances['chartCouponRanking'] = new Chart(el('chartCouponRanking'), {
+      type: 'bar', data: {
+        labels: top15.map(c => c.name.length > 25 ? c.name.substring(0, 25) + '…' : c.name),
+        datasets: [
+          { label: '獲得数', data: top15.map(c => c.totalGet), backgroundColor: 'rgba(39,174,96,0.7)' },
+          { label: '利用数', data: top15.map(c => c.totalUsed), backgroundColor: 'rgba(26,58,92,0.5)' },
+        ]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true } } }
+    });
+  }
+
+  // ── ポイント ──
+  const prm = promo.pointRateMonthly || [];
+  const pum = promo.pointUsageMonthly || [];
+  const prp = promo.pointRateByProduct || [];
+  const allRates = new Set();
+  prm.forEach(m => m.rates.forEach(r => allRates.add(r.rate)));
+  const ratesSorted = [...allRates].sort((a, b) => parseInt(a) - parseInt(b));
+
+  const totalPointOrders = pum.reduce((s, r) => s + r.orders, 0);
+  const totalPointsUsed = pum.reduce((s, r) => s + r.totalPoints, 0);
+  const highRateOrders = prm.reduce((s, m) => s + m.rates.filter(r => r.rate !== '1倍').reduce((ss, r) => ss + r.count, 0), 0);
+  el('pointKpiRow').innerHTML = kpiCard('ポイント利用注文', comma(totalPointOrders), '', '') + kpiCard('ポイント利用額合計', yen(totalPointsUsed), '', '') + kpiCard('倍率UP件数', comma(highRateOrders), '', '累計 2倍以上');
+
+  // ポイント倍率チャート
+  if (chartPointRateTrend) chartPointRateTrend.destroy();
+  if (prm.length > 0) {
+    const colors = ['rgba(26,58,92,0.7)', 'rgba(230,126,34,0.7)', 'rgba(39,174,96,0.7)', 'rgba(192,57,43,0.7)', 'rgba(142,68,173,0.7)'];
+    chartPointRateTrend = new Chart(el('chartPointRateTrend'), {
+      type: 'bar', data: {
+        labels: prm.map(r => D.monthLabels[r.month] || r.month),
+        datasets: ratesSorted.filter(r => r !== '1倍').map((rate, i) => ({
+          label: rate,
+          data: prm.map(m => { const found = m.rates.find(r => r.rate === rate); return found ? found.count : 0; }),
+          backgroundColor: colors[i % colors.length],
+        }))
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+    });
+  }
+
+  // ポイント利用額チャート
+  if (chartPointUsageTrend) chartPointUsageTrend.destroy();
+  if (pum.length > 0) {
+    chartPointUsageTrend = new Chart(el('chartPointUsageTrend'), {
+      type: 'bar', data: {
+        labels: pum.map(r => D.monthLabels[r.month] || r.month),
+        datasets: [{ label: 'ポイント利用額', data: pum.map(r => r.totalPoints), backgroundColor: 'rgba(39,174,96,0.7)' }]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => comma(v) + 'pt' } } } }
+    });
+  }
+
+  // ポイント倍率月別テーブル
+  if (prm.length > 0) {
+    const allRatesArr = [...allRates].sort((a, b) => parseInt(a) - parseInt(b));
+    el('pointRateMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th>' + allRatesArr.map(r => '<th>' + r + '</th>').join('') + '<th>合計</th></tr></thead><tbody>' +
+      prm.map(m => {
+        const total = m.rates.reduce((s, r) => s + r.count, 0);
+        return '<tr><td>' + (D.monthLabels[m.month] || m.month) + '</td>' + allRatesArr.map(rate => { const found = m.rates.find(r => r.rate === rate); return '<td>' + (found ? comma(found.count) : '-') + '</td>'; }).join('') + '<td><strong>' + comma(total) + '</strong></td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  // ポイント倍率UP商品テーブル
+  if (prp.length > 0) {
+    el('pointRateProductTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>商品</th><th>倍率</th><th>件数</th><th>売上</th></tr></thead><tbody>' +
+      prp.map(p => p.rates.map((r, i) => '<tr>' + (i === 0 ? '<td rowspan="' + p.rates.length + '" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + safe(p.productName) + '">' + safe(p.productName) + '</td>' : '') + '<td>' + r.rate + '</td><td>' + comma(r.count) + '</td><td>' + yen(r.sales) + '</td></tr>').join('')).join('') + '</tbody></table>';
+  }
+
+  // ── DEAL ──
+  const dm = promo.dealMonthly || [];
+  const totalDealOrders = dm.reduce((s, r) => s + r.dealOrders, 0);
+  const totalDealSales = dm.reduce((s, r) => s + r.dealSales, 0);
+  const totalAllOrders = dm.reduce((s, r) => s + r.dealOrders + r.normalOrders, 0);
+  const overallDealRate = totalAllOrders > 0 ? Math.round(totalDealOrders / totalAllOrders * 1000) / 10 : 0;
+  el('dealKpiRow').innerHTML = kpiCard('DEAL注文数', comma(totalDealOrders), '', '累計') + kpiCard('DEAL売上', yen(totalDealSales), '', '累計') + kpiCard('DEAL比率', pct1(overallDealRate), '', '');
+
+  // DEALチャート
+  if (chartDealTrend) chartDealTrend.destroy();
+  if (dm.length > 0) {
+    chartDealTrend = new Chart(el('chartDealTrend'), {
+      type: 'bar', data: {
+        labels: dm.map(r => D.monthLabels[r.month] || r.month),
+        datasets: [
+          { label: 'DEAL注文', data: dm.map(r => r.dealOrders), backgroundColor: 'rgba(192,57,43,0.7)' },
+          { label: '通常注文', data: dm.map(r => r.normalOrders), backgroundColor: 'rgba(189,195,199,0.5)' },
+        ]
+      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }
+    });
+  }
+
+  // DEAL月別テーブル
+  if (dm.length > 0) {
+    el('dealMonthlyTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>月</th><th>DEAL注文</th><th>DEAL売上</th><th>通常注文</th><th>通常売上</th><th>DEAL比率</th></tr></thead><tbody>' +
+      dm.map(r => '<tr><td>' + (D.monthLabels[r.month] || r.month) + '</td><td>' + comma(r.dealOrders) + '</td><td>' + yen(r.dealSales) + '</td><td>' + comma(r.normalOrders) + '</td><td>' + yen(r.normalSales) + '</td><td>' + pct1(r.dealRate) + '</td></tr>').join('') + '</tbody></table>';
+  } else {
+    el('dealMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">DEALデータがありません</p>';
+  }
+}
+
 // ── Render all ──
 function renderAll() {
   renderSalesTab();
   renderProductTab();
   renderAdsTab();
   renderAcqTab();
+  renderPromoTab();
   renderRepeatTab();
   renderBasketTab();
   renderLTVTab();
@@ -7301,7 +7818,7 @@ function renderAll() {
 
 // Main tabs
 function updateFilterUI(tabId) {
-  const noFilterTabs = ['tab-customer'];
+  const noFilterTabs = ['tab-customer', 'tab-promo'];
   const noCompareTabs = ['tab-product'];
   const mf = document.getElementById('monthFilter');
   const filterBar = document.querySelector('.filter-bar');
@@ -7330,9 +7847,10 @@ document.querySelectorAll('.main-tab').forEach(tab => {
       if ([...mf.options].some(o => o.value === curYm)) mf.value = curYm;
       renderProductTab();
     }
-    // CRM・広告タブ切替時に再描画
+    // CRM・広告・販促タブ切替時に再描画
     if (this.dataset.tab === 'tab-acq') renderAcqTab();
     if (this.dataset.tab === 'tab-ads') renderAdsTab();
+    if (this.dataset.tab === 'tab-promo') renderPromoTab();
   });
 });
 
@@ -7398,6 +7916,10 @@ document.getElementById('rfmSegmentFilter').addEventListener('change', renderRFM
 
 // Entrance item filter
 document.getElementById('entranceItemFilter').addEventListener('change', renderEntranceTab);
+
+// Coupon month filter
+document.getElementById('couponMonthFilter').addEventListener('change', renderPromoTab);
+document.getElementById('couponStatusFilter').addEventListener('change', renderPromoTab);
 
 // Initial render
 renderAll();
