@@ -7650,9 +7650,9 @@ function renderPromoTab() {
 
   if (!promoFilterInited) {
     promoFilterInited = true;
-    const months = [...new Set(allOrders.map(r => r.ym))].sort();
+    const months = [...new Set(allOrders.map(r => r.ym))].sort().reverse();
     months.forEach(ym => { const o = document.createElement('option'); o.value = ym; o.textContent = D.monthLabels[ym] || ym; el('promoMonthFilter').appendChild(o); });
-    if (months.length > 0) el('promoMonthFilter').value = months[months.length - 1];
+    if (months.length > 0) el('promoMonthFilter').value = months[0];
     el('promoMonthFilter').addEventListener('change', () => renderPromoTab());
   }
 
