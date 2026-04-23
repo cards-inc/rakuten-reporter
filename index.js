@@ -5424,7 +5424,6 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
     <span class="filter-label">商品</span>
     <select id="promoProductFilter" class="filter-select" style="width:auto;min-width:180px;max-width:350px"><option value="">すべて</option></select>
   </div>
-  <div id="promoRatioKpiRow" class="kpi-row" style="margin-bottom:12px"></div>
   <div class="section-box">
     <div class="sub-tabs" id="promoSubTabs">
       <div class="sub-tab active" data-subtab="promo-coupon">クーポン</div>
@@ -5445,40 +5444,32 @@ tbody tr:nth-child(even):hover { background: #f5f6f8; }
       </div>
       <div class="section-box" style="margin-top:16px">
         <div class="section-title">クーポン一覧</div>
-        <div style="margin-bottom:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-          <span class="filter-label">ステータス</span>
-          <select id="couponStatusFilter" class="filter-select" style="width:auto">
-            <option value="">すべて</option>
-            <option value="active">有効</option>
-            <option value="ended">終了</option>
-          </select>
-        </div>
         <div id="couponMasterTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:600px"></div>
       </div>
-      <div class="section-box" style="margin-top:16px">
-        <div class="section-title">クーポン別 獲得数ランキング</div>
-        <div class="chart-wrap chart-md"><canvas id="chartCouponRanking"></canvas></div>
+      <div class="grid-2" style="margin-top:16px">
+        <div class="section-box">
+          <div class="section-title">クーポン別 獲得数ランキング</div>
+          <div class="chart-wrap chart-md"><canvas id="chartCouponRanking"></canvas></div>
+        </div>
+        <div class="section-box">
+          <div class="section-title">クーポン別 利用率ランキング</div>
+          <div class="chart-wrap chart-md"><canvas id="chartCouponUseRateRanking"></canvas></div>
+        </div>
       </div>
     </div>
     <div class="sub-panel" id="promo-point">
       <div id="pointKpiRow" class="kpi-row"></div>
-      <div class="grid-2" style="margin-top:16px">
-        <div class="section-box">
-          <div class="section-title">月別ポイント倍率分布</div>
-          <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
-        </div>
-        <div class="section-box">
-          <div class="section-title">月別ポイント利用額</div>
-          <div class="chart-wrap chart-md"><canvas id="chartPointUsageTrend"></canvas></div>
-        </div>
+      <div class="section-box" style="margin-top:16px">
+        <div class="section-title">月別ポイント倍率分布</div>
+        <div class="chart-wrap chart-md"><canvas id="chartPointRateTrend"></canvas></div>
       </div>
       <div class="section-box" style="margin-top:16px">
         <div class="section-title">ポイント倍率別 月別件数</div>
         <div id="pointRateMonthlyTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
       </div>
       <div class="section-box" style="margin-top:16px">
-        <div class="section-title">ポイント倍率UP商品（2倍以上/DEAL）</div>
-        <div id="pointRateProductTableWrap" style="overflow-x:auto;overflow-y:auto;max-height:480px"></div>
+        <div class="section-title">ポイント倍率UP 売上ランキング</div>
+        <div class="chart-wrap chart-md"><canvas id="chartPointRateProductRanking"></canvas></div>
       </div>
     </div>
     <div class="sub-panel" id="promo-deal">
@@ -7663,36 +7654,12 @@ function renderPromoTab() {
     el('promoProductFilter').addEventListener('change', () => renderPromoTab());
   }
 
-  let orders = allOrders;
-  if (filterMonth) orders = orders.filter(r => r.ym === filterMonth);
+  let ordersByMonth = allOrders;
+  if (filterMonth) ordersByMonth = ordersByMonth.filter(r => r.ym === filterMonth);
+  let orders = ordersByMonth;
   if (filterProduct) orders = orders.filter(r => r.mn === filterProduct);
 
-  // ── 購入比率KPI（ポイント/クーポン/DEAL vs 通常） ──
-  const seenOn = {};
-  let totalUniqueOrders = 0, pointOrders = 0, couponOrders = 0, dealOrders = 0, normalOrders = 0;
-  let totalSales = 0, pointSales = 0, couponSales = 0, dealSales = 0, normalSales = 0;
-  orders.forEach(r => {
-    if (seenOn[r.on]) return;
-    seenOn[r.on] = true;
-    totalUniqueOrders++;
-    totalSales += r.p;
-    const hasPoint = r.pr > 1 || r.up > 0;
-    const hasCoupon = r.cd > 0 || r.cc;
-    const hasDeal = r.df === '1';
-    if (hasPoint) { pointOrders++; pointSales += r.p; }
-    if (hasCoupon) { couponOrders++; couponSales += r.p; }
-    if (hasDeal) { dealOrders++; dealSales += r.p; }
-    if (!hasPoint && !hasCoupon && !hasDeal) { normalOrders++; normalSales += r.p; }
-  });
-  const pctOf = (n, t) => t > 0 ? Math.round(n / t * 1000) / 10 : 0;
-  el('promoRatioKpiRow').innerHTML =
-    kpiCard('全注文', comma(totalUniqueOrders), '', yen(totalSales)) +
-    kpiCard('ポイント利用', comma(pointOrders), '', pctOf(pointOrders, totalUniqueOrders) + '% / ' + yen(pointSales)) +
-    kpiCard('クーポン利用', comma(couponOrders), '', pctOf(couponOrders, totalUniqueOrders) + '% / ' + yen(couponSales)) +
-    kpiCard('DEAL', comma(dealOrders), '', pctOf(dealOrders, totalUniqueOrders) + '% / ' + yen(dealSales)) +
-    kpiCard('通常購入', comma(normalOrders), '', pctOf(normalOrders, totalUniqueOrders) + '% / ' + yen(normalSales));
-
-  // ── クーポン ──
+  // ── クーポン（月フィルタのみ、商品フィルタ対象外） ──
   const couponMasterList = promo.couponSummary || [];
   const cgm = promo.couponGetMonthly || [];
   let cgmF = cgm, cdmF = promo.couponDiscountMonthly || [];
@@ -7706,7 +7673,7 @@ function renderPromoTab() {
   const activeCoupons = couponMasterList.filter(c => c.isActive).length;
   const totalShopDiscount = cdmF.reduce((s, r) => s + r.shopDiscount, 0);
 
-  el('couponKpiRow').innerHTML = kpiCard('クーポン獲得数', comma(totalGetCount), '', '累計') + kpiCard('利用数', comma(totalUsedCount), '', '利用率 ' + totalUseRate + '%') + kpiCard('有効クーポン', comma(activeCoupons) + '種', '', '/' + comma(couponMasterList.length) + '種') + kpiCard('クーポン値引額', yen(totalShopDiscount), '', 'EC分析');
+  el('couponKpiRow').innerHTML = kpiCard('クーポン獲得数', comma(totalGetCount), '', '') + kpiCard('利用数', comma(totalUsedCount), '', '') + kpiCard('利用率', totalUseRate + '%', '', '') + kpiCard('割引金額', yen(totalShopDiscount), '', '');
 
   destroyChart('chartCouponGetTrend');
   if (cgmF.length > 0) {
@@ -7735,19 +7702,14 @@ function renderPromoTab() {
     });
   }
 
-  const couponStatusSelect = el('couponStatusFilter');
-  const filterStatus = couponStatusSelect.value;
   let filteredCoupons = couponMasterList;
   if (filterMonth) filteredCoupons = filteredCoupons.filter(c => c.startYM === filterMonth);
-  if (filterStatus === 'active') filteredCoupons = filteredCoupons.filter(c => c.isActive);
-  if (filterStatus === 'ended') filteredCoupons = filteredCoupons.filter(c => !c.isActive);
 
-  el('couponMasterTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>クーポン名</th><th>割引</th><th>状態</th><th>開始日</th><th>終了日</th><th>獲得数</th><th>利用数</th><th>利用率</th></tr></thead><tbody>' +
+  el('couponMasterTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>クーポン名</th><th>割引</th><th>開始日</th><th>終了日</th><th>獲得数</th><th>利用数</th><th>利用率</th></tr></thead><tbody>' +
     filteredCoupons.map(c => {
       const discountLabel = c.discountType === '1' ? yen(c.discountValue) + ' OFF' : c.discountType === '2' ? c.discountValue + '% OFF' : '-';
-      const statusLabel = c.isActive ? '<span style="color:#27ae60;font-weight:600">有効</span>' : '<span style="color:#95a5a6">終了</span>';
       const useRate = c.totalGet > 0 ? Math.round(c.totalUsed / c.totalGet * 1000) / 10 : 0;
-      return '<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + safe(c.name) + '">' + safe(c.name) + '</td><td>' + discountLabel + '</td><td>' + statusLabel + '</td><td>' + safe(c.startDateStr) + '</td><td>' + safe(c.endDateStr) + '</td><td>' + comma(c.totalGet) + '</td><td>' + comma(c.totalUsed) + '</td><td>' + useRate + '%</td></tr>';
+      return '<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + safe(c.name) + '">' + safe(c.name) + '</td><td>' + discountLabel + '</td><td>' + safe(c.startDateStr) + '</td><td>' + safe(c.endDateStr) + '</td><td>' + comma(c.totalGet) + '</td><td>' + comma(c.totalUsed) + '</td><td>' + useRate + '%</td></tr>';
     }).join('') + '</tbody></table>';
 
   destroyChart('chartCouponRanking');
@@ -7761,6 +7723,17 @@ function renderPromoTab() {
           { label: '利用数', data: top15.map(c => c.totalUsed), backgroundColor: 'rgba(26,58,92,0.5)' },
         ]
       }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } }, scales: { x: { beginAtZero: true } } }
+    });
+  }
+
+  destroyChart('chartCouponUseRateRanking');
+  const rateTop15 = [...filteredCoupons].filter(c => c.totalGet >= 10).map(c => ({ ...c, useRate: Math.round(c.totalUsed / c.totalGet * 1000) / 10 })).sort((a, b) => b.useRate - a.useRate).slice(0, 15).reverse();
+  if (rateTop15.length > 0) {
+    chartInstances['chartCouponUseRateRanking'] = new Chart(el('chartCouponUseRateRanking'), {
+      type: 'bar', data: {
+        labels: rateTop15.map(c => c.name.length > 25 ? c.name.substring(0, 25) + '…' : c.name),
+        datasets: [{ label: '利用率(%)', data: rateTop15.map(c => c.useRate), backgroundColor: 'rgba(192,57,43,0.7)' }]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { callback: v => v + '%' } } } }
     });
   }
 
@@ -7808,10 +7781,11 @@ function renderPromoTab() {
   prm.forEach(m => m.rates.forEach(r => allRates.add(r.rate)));
   const ratesSorted = [...allRates].sort((a, b) => { if (a === 'DEAL') return 1; if (b === 'DEAL') return -1; return parseInt(a) - parseInt(b); });
 
-  const totalPointOrders = pum.reduce((s, r) => s + r.orders, 0);
   const totalPointsUsed = pum.reduce((s, r) => s + r.totalPoints, 0);
-  const highRateOrders = prm.reduce((s, m) => s + m.rates.filter(r => r.rate !== '1倍').reduce((ss, r) => ss + r.count, 0), 0);
-  el('pointKpiRow').innerHTML = kpiCard('ポイント利用注文', comma(totalPointOrders), '', '') + kpiCard('ポイント利用額合計', yen(totalPointsUsed), '', '') + kpiCard('倍率UP件数', comma(highRateOrders), '', '2倍以上+DEAL');
+  const rateCounts = {};
+  prm.forEach(m => m.rates.forEach(r => { rateCounts[r.rate] = (rateCounts[r.rate] || 0) + r.count; }));
+  const rateKpis = ratesSorted.map(r => kpiCard(r === '1倍' ? '通常ポイント' : r, comma(rateCounts[r] || 0), '', '購入者数')).join('');
+  el('pointKpiRow').innerHTML = rateKpis + kpiCard('ポイント利用額', yen(totalPointsUsed), '', '');
 
   destroyChart('chartPointRateTrend');
   if (prm.length > 0) {
@@ -7828,15 +7802,6 @@ function renderPromoTab() {
     });
   }
 
-  destroyChart('chartPointUsageTrend');
-  if (pum.length > 0) {
-    chartInstances['chartPointUsageTrend'] = new Chart(el('chartPointUsageTrend'), {
-      type: 'bar', data: {
-        labels: pum.map(r => D.monthLabels[r.month] || r.month),
-        datasets: [{ label: 'ポイント利用額', data: pum.map(r => r.totalPoints), backgroundColor: 'rgba(39,174,96,0.7)' }]
-      }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { callback: v => comma(v) + 'pt' } } } }
-    });
-  }
 
   if (prm.length > 0) {
     const allRatesArr = ratesSorted;
@@ -7849,11 +7814,17 @@ function renderPromoTab() {
     el('pointRateMonthlyTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
   }
 
+  destroyChart('chartPointRateProductRanking');
   if (prp.length > 0) {
-    el('pointRateProductTableWrap').innerHTML = '<table class="data-table"><thead><tr><th>商品</th><th>倍率</th><th>件数</th><th>売上</th></tr></thead><tbody>' +
-      prp.map(p => p.rates.map((r, i) => '<tr>' + (i === 0 ? '<td rowspan="' + p.rates.length + '" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + safe(p.productName) + '">' + safe(p.productName) + '</td>' : '') + '<td>' + r.rate + '</td><td>' + comma(r.count) + '</td><td>' + yen(r.sales) + '</td></tr>').join('')).join('') + '</tbody></table>';
-  } else {
-    el('pointRateProductTableWrap').innerHTML = '<p style="color:#888;padding:20px">データなし</p>';
+    const prpRanked = [...prp].map(p => ({ name: p.productName, sales: p.rates.reduce((s, r) => s + r.sales, 0), count: p.rates.reduce((s, r) => s + r.count, 0) })).sort((a, b) => b.sales - a.sales).slice(0, 15).reverse();
+    chartInstances['chartPointRateProductRanking'] = new Chart(el('chartPointRateProductRanking'), {
+      type: 'bar', data: {
+        labels: prpRanked.map(r => r.name.length > 25 ? r.name.substring(0, 25) + '…' : r.name),
+        datasets: [
+          { label: '売上', data: prpRanked.map(r => r.sales), backgroundColor: 'rgba(39,174,96,0.7)' },
+        ]
+      }, options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => yen(ctx.raw) + ' / ' + comma(prpRanked[ctx.dataIndex].count) + '件' } } }, scales: { x: { beginAtZero: true, ticks: { callback: v => '¥' + Number(v).toLocaleString() } } } }
+    });
   }
 
   // ── DEAL（orders から再集計） ──
@@ -8015,8 +7986,6 @@ document.getElementById('rfmSegmentFilter').addEventListener('change', renderRFM
 // Entrance item filter
 document.getElementById('entranceItemFilter').addEventListener('change', renderEntranceTab);
 
-// Coupon status filter
-document.getElementById('couponStatusFilter').addEventListener('change', renderPromoTab);
 
 // Initial render
 renderAll();
