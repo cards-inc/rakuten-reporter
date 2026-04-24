@@ -371,9 +371,40 @@ functions.http('fetchRppReport', async (req, res) => {
       const isCurrentMonth = targetMonth.monthStr === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
       const backfillAll = req.query.backfill_all === '1';
       const daysToFetch = (isCurrentMonth && !backfillAll) ? daysInMonth.slice(-3) : daysInMonth;
-      console.log(`rpp_item/kw日別: ${daysToFetch.length}日分 (${daysToFetch[0] || 'none'} 〜 ${daysToFetch[daysToFetch.length - 1] || 'none'})`);
 
-      for (const dayStr of daysToFetch) {
+      // 既存データの日付を取得してスキップ
+      let existingDates = new Set();
+      if (backfillAll) {
+        console.log('backfill skip check start...');
+        try {
+          const skipAuth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+          const skipClient = await skipAuth.getClient();
+          const skipSheets = google.sheets({ version: 'v4', auth: skipClient });
+          console.log('sheets client created, reading B columns...');
+          const [itemRes, kwRes] = await Promise.all([
+            skipSheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'rpp_item_raw!B:B' }).catch(e => { console.log('item B read error:', e.message); return { data: { values: [] } }; }),
+            skipSheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'rpp_kw_raw!B:B' }).catch(e => { console.log('kw B read error:', e.message); return { data: { values: [] } }; }),
+          ]);
+          console.log(`item rows: ${(itemRes.data.values || []).length}, kw rows: ${(kwRes.data.values || []).length}`);
+          const parseDateCol = (vals) => {
+            (vals || []).forEach(row => {
+              const v = String(row[0] || '');
+              const m = v.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+              if (m) existingDates.add(`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`);
+              const m2 = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+              if (m2) existingDates.add(`${m2[1]}-${String(m2[2]).padStart(2,'0')}-${String(m2[3]).padStart(2,'0')}`);
+            });
+          };
+          parseDateCol(itemRes.data.values);
+          parseDateCol(kwRes.data.values);
+          console.log(`既存日付: ${existingDates.size}件`);
+        } catch (e) { console.log('既存日付取得エラー:', e.message, e.stack?.substring(0, 200)); }
+      }
+
+      const filteredDays = backfillAll ? daysToFetch.filter(d => !existingDates.has(d)) : daysToFetch;
+      console.log(`rpp_item/kw日別: ${filteredDays.length}日分 (スキップ${daysToFetch.length - filteredDays.length}日) (${filteredDays[0] || 'none'} 〜 ${filteredDays[filteredDays.length - 1] || 'none'})`);
+
+      for (const dayStr of filteredDays) {
         console.log(`Step 6b-c [${dayStr}]: rpp_item & rpp_kw ダウンロード...`);
         const beforeLen = capturedDownloads.length;
 
@@ -453,14 +484,21 @@ functions.http('fetchRppReport', async (req, res) => {
           capturedDownloads[i].dateOverride = dayStr;
         }
         console.log(`[${dayStr}] キャプチャ: ${capturedDownloads.length - beforeLen}件`);
+
+        // 5日ごとに中間書き込み（タイムアウト対策）
+        if (capturedDownloads.length >= 10 && capturedDownloads.length % 10 < 3) {
+          console.log(`中間書き込み: ${capturedDownloads.length}件処理...`);
+          await processRppDownloads(capturedDownloads.splice(0));
+        }
       }
     } // end targetMonths loop
 
     // ============================================================
-    // Step 8: RPP CSV処理 & 書き込み（全月分まとめて処理）
+    // Step 8: RPP CSV処理 & 書き込み（残り分）
     // ============================================================
-    const rppDownloadCount = capturedDownloads.length;
-    await processRppDownloads(capturedDownloads.slice(0, rppDownloadCount));
+    if (capturedDownloads.length > 0) {
+      await processRppDownloads(capturedDownloads.splice(0));
+    }
     } // end if (!skipRpp)
 
     // ============================================================
