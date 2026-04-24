@@ -3495,11 +3495,19 @@ async function writeRawToSheet(headers, dataRows, sheetName, keyColumnNames) {
     }
   }
 
-  // ソート（取得月 or 日付列）
+  // ソート（取得月 or 日付列）— 日本語日付対応
   const sortIdx = headers.indexOf('取得月') >= 0 ? headers.indexOf('取得月') : (headers.indexOf('日付') >= 0 ? headers.indexOf('日付') : 0);
+  const parseDateKey = (v) => {
+    if (!v) return '';
+    const m = String(v).match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+    if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+    const m2 = String(v).match(/^(\d{4})年(\d{1,2})月$/);
+    if (m2) return `${m2[1]}-${m2[2].padStart(2,'0')}`;
+    return String(v);
+  };
   const mergedRows = Array.from(existingData.values()).sort((a, b) => {
-    const va = a[sortIdx] || '';
-    const vb = b[sortIdx] || '';
+    const va = parseDateKey(a[sortIdx]);
+    const vb = parseDateKey(b[sortIdx]);
     return va < vb ? -1 : va > vb ? 1 : 0;
   });
 
@@ -4284,7 +4292,7 @@ async function generateDashboardHtml() {
   // order_raw
   extractMonths(orderRaw.data, 'orderDatetime', '注文日時', '日付');
 
-  const sortedMonths = [...allMonths].sort().reverse();
+  const sortedMonths = [...allMonths].sort();
 
   // ── RPP column matching with flexible names ──
   const rppAllH = rppAllRaw.headers;
@@ -6417,7 +6425,7 @@ function renderProductMonthlyTable() {
   if (!mWrap) return;
   const metric = document.getElementById('productMetricSelect')?.value || 'sales';
 
-  const validMonths = D.months.filter(ym => ym >= '2025-10').slice().reverse(); // chronological
+  const validMonths = D.months.filter(ym => ym >= '2025-10');
   if (validMonths.length === 0) { mWrap.innerHTML = '<div class="no-data">データなし</div>'; return; }
 
   // 各月 + 前月/前年同月のデータ
@@ -7731,9 +7739,9 @@ function renderPromoTab() {
 
   if (!promoFilterInited) {
     promoFilterInited = true;
-    const months = [...new Set(allOrders.map(r => r.ym))].sort().reverse();
+    const months = [...new Set(allOrders.map(r => r.ym))].sort();
     months.forEach(ym => { const o = document.createElement('option'); o.value = ym; o.textContent = D.monthLabels[ym] || ym; el('promoMonthFilter').appendChild(o); });
-    if (months.length > 0) el('promoMonthFilter').value = months[0];
+    if (months.length > 0) el('promoMonthFilter').value = months[months.length - 1];
     el('promoMonthFilter').addEventListener('change', () => renderPromoTab());
   }
 
