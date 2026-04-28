@@ -213,104 +213,173 @@ functions.http('fetchBeautyReport', async (req, res) => {
       await new Promise(r => setTimeout(r, 1000));
       await page.evaluate(() => { const r = document.querySelector('#rdPeriodDay'); if (r) r.click(); });
       await new Promise(r => setTimeout(r, 2000));
-      // 日ごと選択後に日付設定（YYYY-MM-DD）
       await setRppDateRange(page, targetMonth.startStr, targetMonth.endStr);
       await clickButton(page, 'この条件でダウンロード');
 
-      // 6b: rpp_item_raw（商品別・月ごと）
-      console.log(`Step 6b [${targetMonth.label}]: rpp_item_raw ダウンロード...`);
-      const itemRadioClicked = await page.evaluate(() => {
-        for (const id of ['#rdReportTypeItem', '#rdReportTypeProduct', '#rdReportTypeShohin']) {
-          const r = document.querySelector(id); if (r) { r.click(); return id; }
-        }
-        for (const radio of document.querySelectorAll('input[type="radio"]')) {
-          const label = radio.parentElement?.textContent || '';
-          if (label.includes('商品別')) { radio.click(); return '商品別(label)'; }
-        }
-        return null;
-      });
-      console.log('商品別ラジオ:', itemRadioClicked);
-      await new Promise(r => setTimeout(r, 1000));
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodMonth'); if (r) r.click(); });
-      await new Promise(r => setTimeout(r, 2000));
-      // 月ごと選択後に日付設定（YYYY-MM）
-      await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
-      await clickButton(page, '全商品レポートダウンロード');
-
-      // 6c: rpp_kw_raw（キーワード別・月ごと）
-      console.log(`Step 6c [${targetMonth.label}]: rpp_kw_raw ダウンロード...`);
-      const kwRadioClicked = await page.evaluate(() => {
-        for (const id of ['#rdReportTypeKeyword', '#rdReportTypeKw']) {
-          const r = document.querySelector(id); if (r) { r.click(); return id; }
-        }
-        for (const radio of document.querySelectorAll('input[type="radio"]')) {
-          const label = radio.parentElement?.textContent || '';
-          if (label.includes('キーワード別')) { radio.click(); return 'キーワード別(label)'; }
-        }
-        return null;
-      });
-      console.log('キーワード別ラジオ:', kwRadioClicked);
-      await new Promise(r => setTimeout(r, 1000));
-      // 日別で取得（月別だと1商品1KWに集約されるため）
-      await page.evaluate(() => { const r = document.querySelector('#rdPeriodDay'); if (r) r.click(); });
-      await new Promise(r => setTimeout(r, 2000));
-      await setRppDateRange(page, targetMonth.monthStr, targetMonth.monthStr);
-      await clickButton(page, '全キーワードレポートダウンロード');
-
-      // ダウンロード履歴でCSV取得
-      console.log(`Step 7 [${targetMonth.label}]: ダウンロード履歴ページへ...`);
+      // ダウンロード履歴でrpp_all_raw取得
+      console.log(`Step 7a [${targetMonth.label}]: rpp_all_raw ダウンロード履歴...`);
       await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', { waitUntil: 'networkidle2', timeout: 30000 });
       await new Promise(r => setTimeout(r, 2000));
-
       for (let retry = 0; retry < 6; retry++) {
         const status = await page.evaluate(() => {
           const t = document.body.innerText;
-          return {
-            item: t.includes('全商品レポートダウンロード') && t.includes('完了'),
-            kw: t.includes('全キーワードレポートダウンロード') && t.includes('完了'),
-            all: t.includes('この条件でダウンロード') && t.includes('完了'),
-          };
+          return { all: t.includes('この条件でダウンロード') && t.includes('完了') };
         });
-        console.log(`ダウンロード履歴確認 [${targetMonth.label}] (${retry + 1}/6):`, JSON.stringify(status));
-
-        if (status.item || status.kw || status.all) {
-          const targets = [];
-          if (status.all) targets.push('この条件でダウンロード');
-          if (status.item) targets.push('全商品レポートダウンロード');
-          if (status.kw) targets.push('全キーワードレポートダウンロード');
-          console.log(`完了レポート: ${targets.join(', ')}`);
-          for (const name of targets) {
-            const clicked = await page.evaluate((target) => {
-              const links = Array.from(document.querySelectorAll('a'));
-              for (const link of links) {
-                if (link.textContent.trim() !== 'ダウンロード') continue;
-                const row = link.closest('tr') || link.parentElement?.parentElement;
-                if (!row) continue;
-                if (row.textContent.includes(target) && row.textContent.includes('完了')) {
-                  link.click();
-                  return true;
-                }
-              }
-              return false;
-            }, name);
-            console.log(`${name} ダウンロードクリック: ${clicked}`);
-            await new Promise(r => setTimeout(r, 3000));
-          }
+        if (status.all) {
+          await page.evaluate(() => {
+            for (const link of document.querySelectorAll('a')) {
+              if (link.textContent.trim() !== 'ダウンロード') continue;
+              const row = link.closest('tr') || link.parentElement?.parentElement;
+              if (row && row.textContent.includes('この条件でダウンロード') && row.textContent.includes('完了')) { link.click(); return; }
+            }
+          });
+          await new Promise(r => setTimeout(r, 3000));
           break;
         }
-
-        console.log(`レポート準備待ち... (${retry + 1}/6)`);
+        console.log(`rpp_all_raw準備待ち... (${retry + 1}/6)`);
         await new Promise(r => setTimeout(r, 3000));
         await page.reload({ waitUntil: 'networkidle2' });
         await new Promise(r => setTimeout(r, 3000));
       }
+
+      // 6b-6c: rpp_item_raw & rpp_kw_raw（日別取得）
+      const daysInMonth = [];
+      {
+        const mEnd = new Date(targetMonth.endStr + 'T00:00:00+0900');
+        const nowDate = new Date(); nowDate.setHours(0, 0, 0, 0);
+        for (let d = new Date(targetMonth.startStr + 'T00:00:00+0900'); d <= mEnd && d < nowDate; d.setDate(d.getDate() + 1)) {
+          daysInMonth.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        }
+      }
+      const isCurrentMonth = targetMonth.monthStr === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const backfillAll = req.query.backfill_all === '1';
+      const daysToFetch = (isCurrentMonth && !backfillAll) ? daysInMonth.slice(-3) : daysInMonth;
+
+      let existingDates = new Set();
+      if (backfillAll) {
+        console.log('backfill skip check start...');
+        try {
+          const skipAuth = new google.auth.GoogleAuth({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+          const skipClient = await skipAuth.getClient();
+          const skipSheets = google.sheets({ version: 'v4', auth: skipClient });
+          const [itemRes, kwRes] = await Promise.all([
+            skipSheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'rpp_item_raw!B:B' }).catch(e => { console.log('item B read error:', e.message); return { data: { values: [] } }; }),
+            skipSheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: 'rpp_kw_raw!B:B' }).catch(e => { console.log('kw B read error:', e.message); return { data: { values: [] } }; }),
+          ]);
+          console.log(`item rows: ${(itemRes.data.values || []).length}, kw rows: ${(kwRes.data.values || []).length}`);
+          const parseDateCol = (vals) => {
+            (vals || []).forEach(row => {
+              const v = String(row[0] || '');
+              const m = v.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/);
+              if (m) existingDates.add(`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`);
+              const m2 = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+              if (m2) existingDates.add(`${m2[1]}-${String(m2[2]).padStart(2,'0')}-${String(m2[3]).padStart(2,'0')}`);
+            });
+          };
+          parseDateCol(itemRes.data.values);
+          parseDateCol(kwRes.data.values);
+          console.log(`既存日付: ${existingDates.size}件`);
+        } catch (e) { console.log('既存日付取得エラー:', e.message, e.stack?.substring(0, 200)); }
+      }
+
+      const filteredDays = backfillAll ? daysToFetch.filter(d => !existingDates.has(d)) : daysToFetch;
+      console.log(`rpp_item/kw日別: ${filteredDays.length}日分 (スキップ${daysToFetch.length - filteredDays.length}日) (${filteredDays[0] || 'none'} 〜 ${filteredDays[filteredDays.length - 1] || 'none'})`);
+
+      for (const dayStr of filteredDays) {
+        console.log(`Step 6b-c [${dayStr}]: rpp_item & rpp_kw ダウンロード...`);
+        const beforeLen = capturedDownloads.length;
+
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/reports', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        await setCheckboxes(page);
+
+        // 商品別 → 全期間 → 1日分
+        await page.evaluate(() => {
+          for (const id of ['#rdReportTypeItem', '#rdReportTypeProduct', '#rdReportTypeShohin']) {
+            const r = document.querySelector(id); if (r) { r.click(); return; }
+          }
+          for (const radio of document.querySelectorAll('input[type="radio"]')) {
+            if (radio.parentElement?.textContent?.includes('商品別')) { radio.click(); return; }
+          }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+        await page.evaluate(() => {
+          const r = document.querySelector('#rdPeriodAll') || document.querySelector('[id*="PeriodAll"]');
+          if (r) r.click();
+          else { for (const radio of document.querySelectorAll('input[type="radio"]')) { if (radio.parentElement?.textContent?.includes('全期間')) { radio.click(); return; } } }
+        });
+        await new Promise(r => setTimeout(r, 2000));
+        await setRppDateRange(page, dayStr, dayStr);
+        await clickButton(page, '全商品レポートダウンロード');
+
+        // キーワード別 → 全期間 → 1日分
+        await page.evaluate(() => {
+          for (const id of ['#rdReportTypeKeyword', '#rdReportTypeKw']) {
+            const r = document.querySelector(id); if (r) { r.click(); return; }
+          }
+          for (const radio of document.querySelectorAll('input[type="radio"]')) {
+            if (radio.parentElement?.textContent?.includes('キーワード別')) { radio.click(); return; }
+          }
+        });
+        await new Promise(r => setTimeout(r, 1000));
+        await page.evaluate(() => {
+          const r = document.querySelector('#rdPeriodAll') || document.querySelector('[id*="PeriodAll"]');
+          if (r) r.click();
+          else { for (const radio of document.querySelectorAll('input[type="radio"]')) { if (radio.parentElement?.textContent?.includes('全期間')) { radio.click(); return; } } }
+        });
+        await new Promise(r => setTimeout(r, 2000));
+        await setRppDateRange(page, dayStr, dayStr);
+        await clickButton(page, '全キーワードレポートダウンロード');
+
+        // ダウンロード履歴でCSV取得
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(r => setTimeout(r, 2000));
+        for (let retry = 0; retry < 8; retry++) {
+          const status = await page.evaluate(() => {
+            const t = document.body.innerText;
+            return {
+              item: t.includes('全商品レポートダウンロード') && t.includes('完了'),
+              kw: t.includes('全キーワードレポートダウンロード') && t.includes('完了'),
+            };
+          });
+          if (status.item && status.kw) {
+            for (const name of ['全商品レポートダウンロード', '全キーワードレポートダウンロード']) {
+              await page.evaluate((target) => {
+                for (const link of document.querySelectorAll('a')) {
+                  if (link.textContent.trim() !== 'ダウンロード') continue;
+                  const row = link.closest('tr') || link.parentElement?.parentElement;
+                  if (row && row.textContent.includes(target) && row.textContent.includes('完了')) { link.click(); return; }
+                }
+              }, name);
+              await new Promise(r => setTimeout(r, 2000));
+            }
+            break;
+          }
+          await new Promise(r => setTimeout(r, 3000));
+          await page.reload({ waitUntil: 'networkidle2' });
+          await new Promise(r => setTimeout(r, 2000));
+        }
+
+        // 新規ダウンロードにdateOverrideタグ付け
+        for (let i = beforeLen; i < capturedDownloads.length; i++) {
+          capturedDownloads[i].dateOverride = dayStr;
+        }
+        console.log(`[${dayStr}] キャプチャ: ${capturedDownloads.length - beforeLen}件`);
+
+        // 5日ごとに中間書き込み（タイムアウト対策）
+        if (capturedDownloads.length >= 10 && capturedDownloads.length % 10 < 3) {
+          console.log(`中間書き込み: ${capturedDownloads.length}件処理...`);
+          await processRppDownloads(capturedDownloads.splice(0));
+        }
+      }
     } // end targetMonths loop
 
     // ============================================================
-    // Step 8: RPP CSV処理 & 書き込み（全月分まとめて処理）
+    // Step 8: RPP CSV処理 & 書き込み（残り分）
     // ============================================================
-    const rppDownloadCount = capturedDownloads.length;
-    await processRppDownloads(capturedDownloads.slice(0, rppDownloadCount));
+    if (capturedDownloads.length > 0) {
+      await processRppDownloads(capturedDownloads.splice(0));
+    }
     } // end if (!skipRpp)
 
     // ============================================================
@@ -2350,7 +2419,8 @@ async function processRppDownloads(downloads) {
       for (const entry of zip.getEntries()) {
         if (entry.entryName.endsWith('.csv')) {
           const utf8 = iconv.decode(entry.getData(), 'Shift_JIS');
-          const csvPath = path.join(DOWNLOAD_DIR, entry.entryName);
+          const prefix = dl.dateOverride ? `dt_${dl.dateOverride}_` : '';
+          const csvPath = path.join(DOWNLOAD_DIR, `${prefix}${entry.entryName}`);
           fs.writeFileSync(csvPath, utf8, 'utf-8');
           console.log(`ZIP展開→CSV: ${csvPath}`);
         }
@@ -2368,7 +2438,8 @@ async function processRppDownloads(downloads) {
         utf8 = asUtf8;
         console.log(`CSV保存(UTF-8そのまま): conv_${dl.fileName}`);
       }
-      fs.writeFileSync(path.join(DOWNLOAD_DIR, `conv_${dl.fileName}`), utf8, 'utf-8');
+      const prefix = dl.dateOverride ? `dt_${dl.dateOverride}_` : 'conv_';
+      fs.writeFileSync(path.join(DOWNLOAD_DIR, `${prefix}${dl.fileName}`), utf8, 'utf-8');
     }
   }
 
@@ -2415,6 +2486,24 @@ async function processRppDownloads(downloads) {
     const content = fs.readFileSync(csvFile, 'utf-8');
     const records = parseRakutenCsv(content);
     if (records.length === 0) continue;
+
+    // dateOverride: ファイル名に dt_YYYY-MM-DD_ プレフィックスがあれば日付を上書き
+    const dateMatch = fileName.match(/dt_(\d{4}-\d{2}-\d{2})_/);
+    if (dateMatch) {
+      records.forEach(r => { r['日付'] = dateMatch[1]; });
+    }
+    // 日付範囲の正規化: "2026年04月01日～2026年04月01日" → "2026-04-01"
+    records.forEach(r => {
+      if (!r['日付']) return;
+      let d = r['日付'];
+      if (d.includes('～')) {
+        const parts = d.split('～').map(s => s.trim());
+        if (parts[0] === parts[1]) d = parts[0];
+      }
+      const jm = d.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (jm) d = `${jm[1]}-${jm[2].padStart(2,'0')}-${jm[3].padStart(2,'0')}`;
+      r['日付'] = d;
+    });
 
     let sheetName;
     if (fileName.includes('item') || fileName.includes('shohin')) {
